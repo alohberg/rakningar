@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Räkningar</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div id="app">
+        <main id="main-content">
+
+            <!-- Bills page -->
+            <div id="bills-page" class="page active">
+
+                <div class="page-header">
+                    <h2>Räkningar</h2>
+                </div>
+
+                <!-- Toggle bar + month nav -->
+                <div class="bills-header">
+                    <div class="bills-view-tabs">
+                        <button class="bills-view-tab active" data-view="calendar" onclick="toggleBillsView('calendar')">Kalender</button>
+                        <button class="bills-view-tab active" data-view="costs"    onclick="toggleBillsView('costs')">Räkningar</button>
+                        <button class="bills-view-tab active" data-view="settlement" onclick="toggleBillsView('settlement')">Uppgörelse</button>
+                    </div>
+                    <div class="bills-month-nav">
+                        <button class="btn btn-small" onclick="billsChangeMonth(-1)" title="Föregående månad">‹</button>
+                        <span id="bills-month-label" class="bills-month-label">—</span>
+                        <button class="btn btn-small" onclick="billsChangeMonth(1)"  title="Nästa månad">›</button>
+                    </div>
+                </div>
+
+                <!-- Three panels -->
+                <div class="bills-panels">
+
+                    <!-- Calendar panel -->
+                    <div class="bills-view card" id="bills-view-calendar">
+                        <div class="bills-calendar-header">
+                            <button class="btn btn-small" onclick="billsCalendarChangeYear(-1)">‹</button>
+                            <span id="bills-cal-year" class="bills-cal-year">—</span>
+                            <button class="btn btn-small" onclick="billsCalendarChangeYear(1)">›</button>
+                        </div>
+                        <div id="bills-month-calendar" class="bills-month-calendar"></div>
+                        <div id="bills-income-summary"></div>
+                        <button class="btn bills-comparison-btn" id="bills-comparison-btn" onclick="toggleBillsComparison()">📊 Jämför månader</button>
+                        <div id="bills-comparison-section" class="hidden">
+                            <div class="bills-comparison-charts">
+                                <div class="chart-card bills-chart-card">
+                                    <h3>Totalt per månad</h3>
+                                    <canvas id="bills-total-chart"></canvas>
+                                </div>
+                                <div class="chart-card bills-chart-card">
+                                    <h3>Per person per månad</h3>
+                                    <canvas id="bills-per-person-chart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Bills list panel -->
+                    <div class="bills-view card" id="bills-view-costs">
+                        <div class="bills-panel-header">
+                            <h3 class="bills-panel-title" id="bills-costs-title">Räkningar</h3>
+                            <button class="btn btn-primary btn-small" onclick="openAddBillModal()">+ Ny räkning</button>
+                        </div>
+                        <div id="bills-table-wrap">
+                            <div class="bills-empty" id="bills-empty">Inga räkningar den här månaden ännu.</div>
+                            <table class="bills-table hidden" id="bills-table">
+                                <thead>
+                                    <tr>
+                                        <th>Namn</th>
+                                        <th class="bills-th-amount">Belopp</th>
+                                        <th>Betalad av</th>
+                                        <th>Delas</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="bills-tbody"></tbody>
+                                <tfoot>
+                                    <tr class="bills-total-row">
+                                        <td>Totalt</td>
+                                        <td class="bills-th-amount" id="bills-total-cell">0 kr</td>
+                                        <td colspan="3"></td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Settlement panel -->
+                    <div class="bills-view card" id="bills-view-settlement">
+                        <h3 class="bills-panel-title" id="bills-settlement-title">Uppgörelse</h3>
+                        <div id="bills-partners-list" class="bills-partners-chips"></div>
+                        <button class="btn btn-small" style="margin-bottom:16px" onclick="openAddPartnerModal()">+ Lägg till deltagare</button>
+                        <div id="bills-settlement-body">
+                            <p class="bills-settlement-empty">Lägg till räkningar för att beräkna uppgörelsen.</p>
+                        </div>
+                        <div class="bills-settled-row">
+                            <label class="bills-settled-label">
+                                <input type="checkbox" id="bills-settled-checkbox" onchange="toggleBillsSettled(this.checked)">
+                                <span>Uppgjord</span>
+                            </label>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <!-- Add Bill Modal -->
+    <div id="add-bill-modal" class="modal hidden" onclick="if(event.target===this)closeAddBillModal()">
+        <div class="modal-content modal-sm">
+            <div class="modal-header">
+                <h2>Ny räkning</h2>
+                <button class="close-btn" onclick="closeAddBillModal()">✕</button>
+            </div>
+            <div class="form-group">
+                <label>Namn</label>
+                <input type="text" id="bill-name-inline" placeholder="t.ex. Hyra, El, Internet…" autocomplete="off">
+            </div>
+            <div class="form-group">
+                <label>Belopp (kr)</label>
+                <input type="number" id="bill-amount-inline" placeholder="0" step="1" min="0">
+            </div>
+            <div class="form-group">
+                <label>Betalad av</label>
+                <select id="bill-payer-inline"></select>
+            </div>
+            <div class="form-group">
+                <label class="bills-split-label">
+                    <input type="checkbox" id="bill-split-inline" checked>
+                    Dela upp enligt procentsats
+                </label>
+                <div class="bills-split-hint">Avmarkera om det är en personlig kostnad.</div>
+            </div>
+            <div class="form-actions">
+                <button class="btn" onclick="closeAddBillModal()">Avbryt</button>
+                <button class="btn btn-primary" onclick="saveBillInline()">Spara räkning</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Partner Modal -->
+    <div id="add-partner-modal" class="modal hidden" onclick="if(event.target===this)document.getElementById('add-partner-modal').classList.add('hidden')">
+        <div class="modal-content modal-sm">
+            <div class="modal-header">
+                <h2>Lägg till deltagare</h2>
+                <button class="close-btn" onclick="document.getElementById('add-partner-modal').classList.add('hidden')">&times;</button>
+            </div>
+            <div class="form-group">
+                <label>Namn</label>
+                <input type="text" id="partner-name-input" placeholder="t.ex. Johan, Anna…" autocomplete="off">
+            </div>
+            <div class="form-group">
+                <label>Månadsinkomst (kr)</label>
+                <input type="number" id="partner-income-input" min="0" step="1000" placeholder="t.ex. 45 000" oninput="updatePartnerIncomeHint()">
+                <div id="partner-income-hint" class="bills-split-hint"></div>
+            </div>
+            <div class="form-actions">
+                <button class="btn" onclick="document.getElementById('add-partner-modal').classList.add('hidden')">Avbryt</button>
+                <button class="btn btn-primary" onclick="savePartner()">Spara</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Partner Modal -->
+    <div id="edit-partner-modal" class="modal hidden" onclick="if(event.target===this)document.getElementById('edit-partner-modal').classList.add('hidden')">
+        <div class="modal-content modal-sm">
+            <div class="modal-header">
+                <h2>Redigera deltagare</h2>
+                <button class="close-btn" onclick="document.getElementById('edit-partner-modal').classList.add('hidden')">&times;</button>
+            </div>
+            <input type="hidden" id="edit-partner-id">
+            <div class="form-group">
+                <label>Namn</label>
+                <input type="text" id="edit-partner-name-input" autocomplete="off">
+            </div>
+            <div class="form-group">
+                <label>Månadsinkomst (kr)</label>
+                <input type="number" id="edit-partner-income-input" min="0" step="1000" oninput="updateEditPartnerIncomeHint()">
+                <div id="edit-partner-income-hint" class="bills-split-hint"></div>
+            </div>
+            <div class="form-actions">
+                <button class="btn" onclick="document.getElementById('edit-partner-modal').classList.add('hidden')">Avbryt</button>
+                <button class="btn btn-primary" onclick="updatePartner()">Spara</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+    <script src="/static/app.js"></script>
+</body>
+</html>
