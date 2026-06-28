@@ -2,121 +2,51 @@ import os
 import sqlite3
 from flask import Flask, render_template, request, jsonify
 
-DATABASE_URL = os.environ.get('DATABASE_URL')
-
-if DATABASE_URL:
-    try:
-        import psycopg2
-        import psycopg2.extras
-    except ImportError:
-        DATABASE_URL = None
-
 app = Flask(
     __name__,
     template_folder=os.path.join(os.path.dirname(__file__), '..', 'templates'),
     static_folder=os.path.join(os.path.dirname(__file__), '..', 'static'),
 )
 
-_SQLITE_PATH = os.environ.get('DB_PATH', '/tmp/rakningar.db')
+DB_PATH = os.environ.get('DB_PATH', '/tmp/rakningar.db')
 _db_ready = False
 
 
 def get_db():
-    if DATABASE_URL:
-        return psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
-    conn = sqlite3.connect(_SQLITE_PATH)
+    conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute('PRAGMA foreign_keys = ON')
     return conn
 
 
-def _q(sql):
-    """Swap ? placeholders to %s for PostgreSQL."""
-    if DATABASE_URL:
-        return sql.replace('?', '%s')
-    return sql
-
-
-def _exec(conn, sql, params=()):
-    if DATABASE_URL:
-        cur = conn.cursor()
-        cur.execute(_q(sql), params)
-        return cur
-    return conn.execute(sql, params)
-
-
-def _all(conn, sql, params=()):
-    if DATABASE_URL:
-        cur = conn.cursor()
-        cur.execute(_q(sql), params)
-        return [dict(r) for r in cur.fetchall()]
-    return [dict(r) for r in conn.execute(sql, params).fetchall()]
-
-
-def _one(conn, sql, params=()):
-    if DATABASE_URL:
-        cur = conn.cursor()
-        cur.execute(_q(sql), params)
-        row = cur.fetchone()
-        return dict(row) if row else None
-    row = conn.execute(sql, params).fetchone()
-    return dict(row) if row else None
-
-
 def init_db():
     conn = get_db()
-    try:
-        if DATABASE_URL:
-            cur = conn.cursor()
-            cur.execute('''CREATE TABLE IF NOT EXISTS bill_partners (
-                id      SERIAL PRIMARY KEY,
-                name    TEXT NOT NULL UNIQUE,
-                share   DOUBLE PRECISION DEFAULT 50,
-                income  DOUBLE PRECISION DEFAULT 0
-            )''')
-            cur.execute('''CREATE TABLE IF NOT EXISTS bills (
-                id         SERIAL PRIMARY KEY,
-                name       TEXT NOT NULL,
-                amount     DOUBLE PRECISION NOT NULL,
-                paid_by    INTEGER NOT NULL REFERENCES bill_partners(id) ON DELETE CASCADE,
-                year       INTEGER NOT NULL,
-                month      INTEGER NOT NULL,
-                is_split   INTEGER DEFAULT 1,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )''')
-            cur.execute('''CREATE TABLE IF NOT EXISTS bill_month_settled (
-                year  INTEGER NOT NULL,
-                month INTEGER NOT NULL,
-                PRIMARY KEY (year, month)
-            )''')
-        else:
-            conn.executescript('''
-                CREATE TABLE IF NOT EXISTS bill_partners (
-                    id      INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name    TEXT NOT NULL UNIQUE,
-                    share   REAL DEFAULT 50,
-                    income  REAL DEFAULT 0
-                );
-                CREATE TABLE IF NOT EXISTS bills (
-                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name       TEXT NOT NULL,
-                    amount     REAL NOT NULL,
-                    paid_by    INTEGER NOT NULL,
-                    year       INTEGER NOT NULL,
-                    month      INTEGER NOT NULL,
-                    is_split   INTEGER DEFAULT 1,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY(paid_by) REFERENCES bill_partners(id) ON DELETE CASCADE
-                );
-                CREATE TABLE IF NOT EXISTS bill_month_settled (
-                    year  INTEGER NOT NULL,
-                    month INTEGER NOT NULL,
-                    PRIMARY KEY (year, month)
-                );
-            ''')
-        conn.commit()
-    finally:
-        conn.close()
+    conn.executescript('''
+        CREATE TABLE IF NOT EXISTS bill_partners (
+            id      INTEGER PRIMARY KEY AUTOINCREMENT,
+            name    TEXT NOT NULL UNIQUE,
+            share   REAL DEFAULT 50,
+            income  REAL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS bills (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            name       TEXT NOT NULL,
+            amount     REAL NOT NULL,
+            paid_by    INTEGER NOT NULL,
+            year       INTEGER NOT NULL,
+            month      INTEGER NOT NULL,
+            is_split   INTEGER DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(paid_by) REFERENCES bill_partners(id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS bill_month_settled (
+            year  INTEGER NOT NULL,
+            month INTEGER NOT NULL,
+            PRIMARY KEY (year, month)
+        );
+    ''')
+    conn.commit()
+    conn.close()
 
 
 @app.before_request
@@ -128,7 +58,7 @@ def ensure_db():
 
 
 def _recalculate_partner_shares(conn):
-    rows = _all(conn, 'SELECT id, income FROM bill_partners')
+    rows = conn.execute('SELECT id, income FROM bill_partners').fetchall()
     if not rows:
         return
     if not all((r['income'] or 0) > 0 for r in rows):
@@ -136,7 +66,7 @@ def _recalculate_partner_shares(conn):
     total = sum(r['income'] for r in rows)
     for r in rows:
         share = round(r['income'] / total * 100, 1)
-        _exec(conn, 'UPDATE bill_partners SET share = ? WHERE id = ?', (share, r['id']))
+        conn.execute('UPDATE bill_partners SET share = ? WHERE id = ?', (share, r['id']))
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -149,9 +79,9 @@ def index():
 @app.route('/api/bill-partners', methods=['GET'])
 def get_bill_partners():
     conn = get_db()
-    rows = _all(conn, 'SELECT * FROM bill_partners ORDER BY name')
+    rows = conn.execute('SELECT * FROM bill_partners ORDER BY name').fetchall()
     conn.close()
-    return jsonify(rows)
+    return jsonify([dict(r) for r in rows])
 
 
 @app.route('/api/bill-partners', methods=['POST'])
@@ -164,19 +94,15 @@ def create_bill_partner():
         return jsonify({'error': 'Namn krävs'}), 400
     conn = get_db()
     try:
-        _exec(conn, 'INSERT INTO bill_partners (name, share, income) VALUES (?, ?, ?)',
-              (name, share, income))
+        conn.execute('INSERT INTO bill_partners (name, share, income) VALUES (?, ?, ?)',
+                     (name, share, income))
         conn.commit()
         _recalculate_partner_shares(conn)
         conn.commit()
-        row = _one(conn, 'SELECT * FROM bill_partners WHERE name = ?', (name,))
+        row = conn.execute('SELECT * FROM bill_partners WHERE name = ?', (name,)).fetchone()
         conn.close()
-        return jsonify(row), 201
+        return jsonify(dict(row)), 201
     except Exception as e:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
         conn.close()
         return jsonify({'error': str(e)}), 400
 
@@ -185,7 +111,7 @@ def create_bill_partner():
 def update_bill_partner(pid):
     data = request.json
     conn = get_db()
-    row  = _one(conn, 'SELECT * FROM bill_partners WHERE id = ?', (pid,))
+    row  = conn.execute('SELECT * FROM bill_partners WHERE id = ?', (pid,)).fetchone()
     if not row:
         conn.close()
         return jsonify({'error': 'Hittades inte'}), 404
@@ -193,19 +119,15 @@ def update_bill_partner(pid):
     income = float(data.get('income') if data.get('income') is not None else (row['income'] or 0))
     share  = float(data.get('share')  if data.get('share')  is not None else row['share'])
     try:
-        _exec(conn, 'UPDATE bill_partners SET name = ?, share = ?, income = ? WHERE id = ?',
-              (name, share, income, pid))
+        conn.execute('UPDATE bill_partners SET name = ?, share = ?, income = ? WHERE id = ?',
+                     (name, share, income, pid))
         conn.commit()
         _recalculate_partner_shares(conn)
         conn.commit()
-        updated = _one(conn, 'SELECT * FROM bill_partners WHERE id = ?', (pid,))
+        updated = conn.execute('SELECT * FROM bill_partners WHERE id = ?', (pid,)).fetchone()
         conn.close()
-        return jsonify(updated)
+        return jsonify(dict(updated))
     except Exception as e:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
         conn.close()
         return jsonify({'error': str(e)}), 400
 
@@ -213,7 +135,7 @@ def update_bill_partner(pid):
 @app.route('/api/bill-partners/<int:pid>', methods=['DELETE'])
 def delete_bill_partner(pid):
     conn = get_db()
-    _exec(conn, 'DELETE FROM bill_partners WHERE id = ?', (pid,))
+    conn.execute('DELETE FROM bill_partners WHERE id = ?', (pid,))
     conn.commit()
     conn.close()
     return jsonify({'ok': True})
@@ -225,20 +147,20 @@ def get_bills():
     month = request.args.get('month', type=int)
     conn  = get_db()
     if year and month:
-        rows = _all(conn, '''
+        rows = conn.execute('''
             SELECT b.*, p.name as partner_name
             FROM bills b JOIN bill_partners p ON p.id = b.paid_by
             WHERE b.year = ? AND b.month = ?
             ORDER BY b.created_at
-        ''', (year, month))
+        ''', (year, month)).fetchall()
     else:
-        rows = _all(conn, '''
+        rows = conn.execute('''
             SELECT b.*, p.name as partner_name
             FROM bills b JOIN bill_partners p ON p.id = b.paid_by
             ORDER BY b.year DESC, b.month DESC, b.created_at
-        ''')
+        ''').fetchall()
     conn.close()
-    return jsonify(rows)
+    return jsonify([dict(r) for r in rows])
 
 
 @app.route('/api/bills', methods=['POST'])
@@ -254,23 +176,19 @@ def create_bill():
         return jsonify({'error': 'Ogiltiga fält'}), 400
     conn = get_db()
     try:
-        _exec(conn,
+        conn.execute(
             'INSERT INTO bills (name, amount, paid_by, year, month, is_split) VALUES (?, ?, ?, ?, ?, ?)',
             (name, float(amount), int(paid_by), int(year), int(month), is_split)
         )
         conn.commit()
-        row = _one(conn, '''
+        row = conn.execute('''
             SELECT b.*, p.name as partner_name FROM bills b
             JOIN bill_partners p ON p.id = b.paid_by
             ORDER BY b.id DESC LIMIT 1
-        ''')
+        ''').fetchone()
         conn.close()
-        return jsonify(row), 201
+        return jsonify(dict(row)), 201
     except Exception as e:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
         conn.close()
         return jsonify({'error': str(e)}), 400
 
@@ -278,12 +196,12 @@ def create_bill():
 @app.route('/api/bills/<int:bid>/toggle-split', methods=['PATCH'])
 def toggle_bill_split(bid):
     conn = get_db()
-    row  = _one(conn, 'SELECT is_split FROM bills WHERE id = ?', (bid,))
+    row  = conn.execute('SELECT is_split FROM bills WHERE id = ?', (bid,)).fetchone()
     if not row:
         conn.close()
         return jsonify({'error': 'Hittades inte'}), 404
     new_val = 0 if row['is_split'] else 1
-    _exec(conn, 'UPDATE bills SET is_split = ? WHERE id = ?', (new_val, bid))
+    conn.execute('UPDATE bills SET is_split = ? WHERE id = ?', (new_val, bid))
     conn.commit()
     conn.close()
     return jsonify({'is_split': new_val})
@@ -292,7 +210,7 @@ def toggle_bill_split(bid):
 @app.route('/api/bills/<int:bid>', methods=['DELETE'])
 def delete_bill(bid):
     conn = get_db()
-    _exec(conn, 'DELETE FROM bills WHERE id = ?', (bid,))
+    conn.execute('DELETE FROM bills WHERE id = ?', (bid,))
     conn.commit()
     conn.close()
     return jsonify({'ok': True})
@@ -301,30 +219,32 @@ def delete_bill(bid):
 @app.route('/api/bills/months', methods=['GET'])
 def get_bill_months():
     conn = get_db()
-    rows = _all(conn, 'SELECT DISTINCT year, month FROM bills ORDER BY year DESC, month DESC')
+    rows = conn.execute(
+        'SELECT DISTINCT year, month FROM bills ORDER BY year DESC, month DESC'
+    ).fetchall()
     conn.close()
-    return jsonify(rows)
+    return jsonify([dict(r) for r in rows])
 
 
 @app.route('/api/bills/comparison', methods=['GET'])
 def get_bills_comparison():
     conn     = get_db()
-    months   = _all(conn, 'SELECT DISTINCT year, month FROM bills ORDER BY year ASC, month ASC')
-    partners = _all(conn, 'SELECT id, name, share FROM bill_partners ORDER BY id')
+    months   = conn.execute('SELECT DISTINCT year, month FROM bills ORDER BY year ASC, month ASC').fetchall()
+    partners = conn.execute('SELECT id, name, share FROM bill_partners ORDER BY id').fetchall()
     result_months = []
     for m in months:
         y, mo = m['year'], m['month']
-        total_row       = _one(conn, 'SELECT COALESCE(SUM(amount),0) as total FROM bills WHERE year=? AND month=?', (y, mo))
-        split_total_row = _one(conn, 'SELECT COALESCE(SUM(amount),0) as total FROM bills WHERE year=? AND month=? AND is_split=1', (y, mo))
+        total_row       = conn.execute('SELECT COALESCE(SUM(amount),0) as total FROM bills WHERE year=? AND month=?', (y, mo)).fetchone()
+        split_total_row = conn.execute('SELECT COALESCE(SUM(amount),0) as total FROM bills WHERE year=? AND month=? AND is_split=1', (y, mo)).fetchone()
         total_split = split_total_row['total']
         per_partner_shared   = {}
         per_partner_personal = {}
         for p in partners:
             per_partner_shared[p['name']] = round(total_split * (p['share'] or 0) / 100, 2)
-            personal_row = _one(conn,
+            personal_row = conn.execute(
                 'SELECT COALESCE(SUM(amount),0) as personal FROM bills WHERE year=? AND month=? AND paid_by=? AND is_split=0',
                 (y, mo, p['id'])
-            )
+            ).fetchone()
             per_partner_personal[p['name']] = round(personal_row['personal'], 2)
         total_all      = round(total_row['total'], 2)
         total_personal = round(total_all - total_split, 2)
@@ -340,9 +260,9 @@ def get_bills_comparison():
 @app.route('/api/bills/settled', methods=['GET'])
 def get_bills_settled():
     conn = get_db()
-    rows = _all(conn, 'SELECT year, month FROM bill_month_settled')
+    rows = conn.execute('SELECT year, month FROM bill_month_settled').fetchall()
     conn.close()
-    return jsonify(rows)
+    return jsonify([dict(r) for r in rows])
 
 
 @app.route('/api/bills/settled', methods=['POST'])
@@ -353,10 +273,7 @@ def mark_bill_settled():
     if not year or not month:
         return jsonify({'error': 'year och month krävs'}), 400
     conn = get_db()
-    sql = ('INSERT INTO bill_month_settled (year, month) VALUES (?, ?) ON CONFLICT DO NOTHING'
-           if DATABASE_URL else
-           'INSERT OR IGNORE INTO bill_month_settled (year, month) VALUES (?, ?)')
-    _exec(conn, sql, (year, month))
+    conn.execute('INSERT OR IGNORE INTO bill_month_settled (year, month) VALUES (?,?)', (year, month))
     conn.commit()
     conn.close()
     return jsonify({'ok': True})
@@ -365,7 +282,7 @@ def mark_bill_settled():
 @app.route('/api/bills/settled/<int:year>/<int:month>', methods=['DELETE'])
 def unmark_bill_settled(year, month):
     conn = get_db()
-    _exec(conn, 'DELETE FROM bill_month_settled WHERE year=? AND month=?', (year, month))
+    conn.execute('DELETE FROM bill_month_settled WHERE year=? AND month=?', (year, month))
     conn.commit()
     conn.close()
     return jsonify({'ok': True})
@@ -378,12 +295,12 @@ def get_bills_summary():
     if not year or not month:
         return jsonify({'error': 'year och month krävs'}), 400
     conn     = get_db()
-    bills    = _all(conn, '''
+    bills    = conn.execute('''
         SELECT b.amount, b.paid_by, b.is_split, p.name as partner_name
         FROM bills b JOIN bill_partners p ON p.id = b.paid_by
         WHERE b.year = ? AND b.month = ?
-    ''', (year, month))
-    partners = _all(conn, 'SELECT * FROM bill_partners ORDER BY name')
+    ''', (year, month)).fetchall()
+    partners = conn.execute('SELECT * FROM bill_partners ORDER BY name').fetchall()
     conn.close()
     if not partners:
         return jsonify({'partners': [], 'transfers': [], 'total': 0, 'total_split': 0})
