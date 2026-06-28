@@ -46,6 +46,14 @@ def init_db():
             month INTEGER NOT NULL,
             PRIMARY KEY (year, month)
         );
+        CREATE TABLE IF NOT EXISTS bill_partner_incomes (
+            partner_id INTEGER NOT NULL,
+            year       INTEGER NOT NULL,
+            month      INTEGER NOT NULL,
+            income     REAL NOT NULL DEFAULT 0,
+            PRIMARY KEY (partner_id, year, month),
+            FOREIGN KEY (partner_id) REFERENCES bill_partners(id) ON DELETE CASCADE
+        );
     ''')
     conn.commit()
     conn.close()
@@ -66,7 +74,7 @@ def _recalculate_partner_shares(conn):
         conn.execute('UPDATE bill_partners SET share = ? WHERE id = ?', (share, r['id']))
 
 
-# ── Routes ────────────────────────────────────────────────────────────────────
+# ── Routes ────────────────────────────────────────────────────────────────────────────────────
 
 @app.route('/')
 def index():
@@ -213,6 +221,42 @@ def delete_bill(bid):
     return jsonify({'ok': True})
 
 
+@app.route('/api/bill-incomes', methods=['GET'])
+def get_bill_incomes():
+    year  = request.args.get('year',  type=int)
+    month = request.args.get('month', type=int)
+    if not year or not month:
+        return jsonify({'error': 'year och month krävs'}), 400
+    conn     = get_db()
+    partners = conn.execute('SELECT id FROM bill_partners ORDER BY name').fetchall()
+    stored   = {r['partner_id']: r['income'] for r in conn.execute(
+        'SELECT partner_id, income FROM bill_partner_incomes WHERE year=? AND month=?',
+        (year, month)
+    ).fetchall()}
+    conn.close()
+    return jsonify([{'partner_id': p['id'], 'income': stored.get(p['id'], 0)} for p in partners])
+
+
+@app.route('/api/bill-incomes', methods=['PATCH'])
+def upsert_bill_income():
+    data       = request.json
+    partner_id = data.get('partner_id')
+    year       = data.get('year')
+    month      = data.get('month')
+    income     = float(data.get('income') or 0)
+    if not partner_id or not year or not month:
+        return jsonify({'error': 'partner_id, year och month krävs'}), 400
+    conn = get_db()
+    conn.execute(
+        'INSERT INTO bill_partner_incomes (partner_id, year, month, income) VALUES (?,?,?,?)'
+        ' ON CONFLICT(partner_id,year,month) DO UPDATE SET income=excluded.income',
+        (int(partner_id), int(year), int(month), income)
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+
 @app.route('/api/bills/months', methods=['GET'])
 def get_bill_months():
     conn = get_db()
@@ -298,6 +342,10 @@ def get_bills_summary():
         WHERE b.year = ? AND b.month = ?
     ''', (year, month)).fetchall()
     partners = conn.execute('SELECT * FROM bill_partners ORDER BY name').fetchall()
+    monthly_income_rows = conn.execute(
+        'SELECT partner_id, income FROM bill_partner_incomes WHERE year=? AND month=?',
+        (year, month)
+    ).fetchall()
     conn.close()
     if not partners:
         return jsonify({'partners': [], 'transfers': [], 'total': 0, 'total_split': 0})
@@ -311,8 +359,20 @@ def get_bills_summary():
     for b in bills:
         if not b['is_split']:
             personal[b['paid_by']] += b['amount']
-    fair_shares = {p['id']: round(total_split * (p['share'] or 0) / 100, 2) for p in partners}
-    balances    = {p['id']: round(paid[p['id']] - fair_shares[p['id']], 2) for p in partners}
+    monthly_incomes = {r['partner_id']: r['income'] for r in monthly_income_rows}
+    if monthly_incomes:
+        total_income = sum(monthly_incomes.get(p['id'], 0) for p in partners)
+        if total_income > 0:
+            shares_pct  = {p['id']: round(monthly_incomes.get(p['id'], 0) / total_income * 100, 1) for p in partners}
+            fair_shares = {p['id']: round(total_split * monthly_incomes.get(p['id'], 0) / total_income, 2) for p in partners}
+        else:
+            n = len(partners)
+            shares_pct  = {p['id']: round(100 / n, 1) for p in partners}
+            fair_shares = {p['id']: round(total_split / n, 2) for p in partners}
+    else:
+        shares_pct  = {p['id']: (p['share'] or 0) for p in partners}
+        fair_shares = {p['id']: round(total_split * (p['share'] or 0) / 100, 2) for p in partners}
+    balances = {p['id']: round(paid[p['id']] - fair_shares[p['id']], 2) for p in partners}
     pos = sorted([(v, k) for k, v in balances.items() if v > 0.005],  reverse=True)
     neg = sorted([(v, k) for k, v in balances.items() if v < -0.005])
     transfers = []
@@ -329,7 +389,7 @@ def get_bills_summary():
     return jsonify({
         'total': round(total_all, 2), 'total_split': round(total_split, 2),
         'partners': [{
-            'id': p['id'], 'name': p['name'], 'share': p['share'],
+            'id': p['id'], 'name': p['name'], 'share': shares_pct[p['id']],
             'paid': round(paid[p['id']], 2), 'fair_share': fair_shares[p['id']],
             'balance': round(balances[p['id']], 2), 'personal': round(personal[p['id']], 2),
         } for p in partners],

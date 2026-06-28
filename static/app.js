@@ -1,10 +1,9 @@
-// ── Utilities ─────────────────────────────────────────────────────────────────
+// ── Utilities ─────────────────────────────────────────────────────────────────────────────────────────
 
 function showToast(message, type = 'info') {
     const toast = document.createElement('div');
     toast.className = 'toast toast-' + type;
-    const icon = type === 'success' ? '✅' : type === 'error' ? '❌' : 'ℹ️';
-    toast.textContent = `${icon} ${message}`;
+    toast.textContent = message;
     document.body.appendChild(toast);
     requestAnimationFrame(() => toast.classList.add('toast-visible'));
     setTimeout(() => {
@@ -25,7 +24,7 @@ function escHtml(str) {
         .replace(/"/g, '&quot;');
 }
 
-// ── State ─────────────────────────────────────────────────────────────────────
+// ── State ───────────────────────────────────────────────────────────────────────────────────────
 
 const MONTH_NAMES_SV = [
     'Januari','Februari','Mars','April','Maj','Juni',
@@ -38,6 +37,7 @@ const billsState = {
     calYear:           new Date().getFullYear(),
     partners:          [],
     bills:             [],
+    monthlyIncomes:    {},
     monthsWithBills:   new Set(),
     settledMonths:     new Set(),
     comparisonVisible: false,
@@ -46,7 +46,9 @@ const billsState = {
     selectedComparisonMonths: new Set(),
 };
 
-// ── Boot ──────────────────────────────────────────────────────────────────────
+const _incomeTimers = {};
+
+// ── Boot ────────────────────────────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', async () => {
     await loadBillsPage();
@@ -57,21 +59,32 @@ async function loadBillsPage() {
         loadBillPartners().catch(() => {}),
         loadBillsForMonth().catch(() => {}),
         loadBillsCalendarData().catch(() => {}),
+        loadBillIncomes().catch(() => {}),
     ]);
     renderBillsPartners();
+    renderBillsIncomeSummary();
     renderBillsTable();
     try { await renderBillsSettlement(); } catch(e) {}
     updateBillsMonthLabel();
     renderBillsMonthCalendar();
     updateBillsSettledCheckbox(true);
+    initMobilePanels();
 }
 
-// ── Data loaders ──────────────────────────────────────────────────────────────
+// ── Data loaders ───────────────────────────────────────────────────────────────────────────
 
 async function loadBillPartners() {
     const res = await fetch('/api/bill-partners');
     billsState.partners = await res.json();
-    renderBillsIncomeSummary();
+}
+
+async function loadBillIncomes() {
+    const res = await fetch(`/api/bill-incomes?year=${billsState.year}&month=${billsState.month}`);
+    if (res.ok) {
+        const data = await res.json();
+        billsState.monthlyIncomes = {};
+        data.forEach(d => { billsState.monthlyIncomes[d.partner_id] = d.income || 0; });
+    }
 }
 
 async function loadBillsForMonth() {
@@ -94,7 +107,7 @@ async function loadBillsCalendarData() {
     }
 }
 
-// ── Renderers ─────────────────────────────────────────────────────────────────
+// ── Renderers ───────────────────────────────────────────────────────────────────────────────────
 
 function updateBillsMonthLabel() {
     const monthYear = `${MONTH_NAMES_SV[billsState.month - 1]} ${billsState.year}`;
@@ -110,26 +123,63 @@ function renderBillsIncomeSummary() {
     const el = document.getElementById('bills-income-summary');
     if (!el) return;
     const partners = billsState.partners;
-    const withIncome = partners.filter(p => p.income > 0);
-    if (withIncome.length === 0) { el.innerHTML = ''; return; }
-    const totalIncome = partners.reduce((s, p) => s + (p.income || 0), 0);
-    const rows = partners.map(p => `
+    if (partners.length === 0) { el.innerHTML = ''; return; }
+    const totalIncome = Object.values(billsState.monthlyIncomes).reduce((s, v) => s + v, 0);
+    const monthLabel  = `${MONTH_NAMES_SV[billsState.month - 1]} ${billsState.year}`;
+    const rows = partners.map(p => {
+        const income = billsState.monthlyIncomes[p.id] || 0;
+        const share  = totalIncome > 0 ? Math.round(income / totalIncome * 1000) / 10 : 0;
+        return `
         <div class="bills-income-row">
             <span class="bills-income-name">${escHtml(p.name)}</span>
-            <span class="bills-income-figures">
-                ${p.income ? formatCurrency(p.income) + '/mån' : '—'}
-                <span class="bills-income-share-badge">${p.share}%</span>
-            </span>
-        </div>`).join('');
+            <div class="bills-income-input-wrap">
+                <input type="number" class="bills-income-input" data-pid="${p.id}"
+                       value="${income || ''}" placeholder="0" min="0" step="1000"
+                       oninput="onBillIncomeInput(${p.id}, this.value)">
+                <span class="bills-income-unit">kr</span>
+            </div>
+            <span class="bills-income-share-badge" id="bills-income-share-${p.id}">${share > 0 ? share + '%' : '—'}</span>
+        </div>`;
+    }).join('');
     el.innerHTML = `
         <div class="bills-income-block">
-            <div class="bills-income-block-title">Inkomster</div>
+            <div class="bills-income-block-title">Inkomster – ${monthLabel}</div>
             ${rows}
             <div class="bills-income-block-total">
                 <span>Totalt</span>
-                <span>${formatCurrency(totalIncome)}/mån</span>
+                <span>${totalIncome > 0 ? formatCurrency(totalIncome) + '/mån' : '—'}</span>
             </div>
         </div>`;
+}
+
+function onBillIncomeInput(partnerId, value) {
+    billsState.monthlyIncomes[partnerId] = parseFloat(value) || 0;
+    _updateIncomeShareBadges();
+    clearTimeout(_incomeTimers[partnerId]);
+    _incomeTimers[partnerId] = setTimeout(async () => {
+        await saveBillIncome(partnerId, billsState.monthlyIncomes[partnerId]);
+        await renderBillsSettlement();
+    }, 700);
+}
+
+function _updateIncomeShareBadges() {
+    const total = Object.values(billsState.monthlyIncomes).reduce((s, v) => s + v, 0);
+    billsState.partners.forEach(p => {
+        const badge = document.getElementById(`bills-income-share-${p.id}`);
+        if (!badge) return;
+        const income = billsState.monthlyIncomes[p.id] || 0;
+        badge.textContent = total > 0 ? (Math.round(income / total * 1000) / 10) + '%' : '—';
+    });
+    const totalEl = document.querySelector('.bills-income-block-total span:last-child');
+    if (totalEl) totalEl.textContent = total > 0 ? formatCurrency(total) + '/mån' : '—';
+}
+
+async function saveBillIncome(partnerId, income) {
+    await fetch('/api/bill-incomes', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ partner_id: partnerId, year: billsState.year, month: billsState.month, income }),
+    });
 }
 
 function renderBillsPartners() {
@@ -137,24 +187,17 @@ function renderBillsPartners() {
     if (!list) return;
     if (billsState.partners.length === 0) {
         list.innerHTML = '<span style="font-size:13px;color:var(--text-muted);font-style:italic">Inga deltagare ännu</span>';
+        const mobileList = document.getElementById('bills-partners-list-mobile');
+        if (mobileList) mobileList.innerHTML = list.innerHTML;
         return;
     }
-    const totalShare = billsState.partners.reduce((s, p) => s + (p.share || 0), 0);
-    const warn = Math.abs(totalShare - 100) > 0.5
-        ? `<span class="bills-share-warning" title="Andelarna summerar till ${totalShare}%, inte 100%">⚠ ${totalShare}%</span>`
-        : '';
-    list.innerHTML = billsState.partners.map(p => {
-        const incomeStr = p.income ? ` · ${Math.round(p.income / 1000)}k` : '';
-        const shareStr  = p.share != null ? p.share + '%' : '';
-        return `
+    list.innerHTML = billsState.partners.map(p => `
         <span class="bills-partner-chip">
-            <button class="bills-partner-chip-edit" onclick="openEditPartnerModal(${p.id})" title="Redigera">
-                ${escHtml(p.name)}
-                <span class="bills-partner-share-badge">${shareStr}${incomeStr}</span>
-            </button>
+            <button class="bills-partner-chip-edit" onclick="openEditPartnerModal(${p.id})" title="Redigera">${escHtml(p.name)}</button>
             <button class="bills-partner-delete" onclick="deletePartner(${p.id})" title="Ta bort">×</button>
-        </span>`;
-    }).join('') + warn;
+        </span>`).join('');
+    const mobileList = document.getElementById('bills-partners-list-mobile');
+    if (mobileList) mobileList.innerHTML = list.innerHTML;
 }
 
 function renderBillsTable() {
@@ -211,8 +254,9 @@ async function renderBillsSettlement() {
             ? (diff >= 0 ? `Fick tillbaka ${formatCurrency(diff)}` : `Betalade ${formatCurrency(Math.abs(diff))}`)
             : (diff >= 0 ? `Får tillbaka ${formatCurrency(diff)}` : `Är skyldig ${formatCurrency(Math.abs(diff))}`);
         const partnerData  = billsState.partners.find(x => x.name === p.name);
-        const incomeLabel  = partnerData && partnerData.income
-            ? `<span class="bills-partner-income-label">${formatCurrency(partnerData.income)}/mån</span>`
+        const monthIncome  = partnerData ? (billsState.monthlyIncomes[partnerData.id] || 0) : 0;
+        const incomeLabel  = monthIncome > 0
+            ? `<span class="bills-partner-income-label">${formatCurrency(monthIncome)}/mån</span>`
             : '';
         const personalRow = p.personal > 0 ? `
                 <li>
@@ -265,7 +309,7 @@ async function renderBillsSettlement() {
         </div>`;
 }
 
-// ── Month calendar ────────────────────────────────────────────────────────────
+// ── Month calendar ────────────────────────────────────────────────────────────────────────────
 
 function renderBillsMonthCalendar() {
     const cal     = document.getElementById('bills-month-calendar');
@@ -319,16 +363,17 @@ function billsJumpToMonth(year, month) {
     billsState.year    = year;
     billsState.month   = month;
     billsState.calYear = year;
-    loadBillsForMonth().then(() => {
+    Promise.all([loadBillsForMonth(), loadBillIncomes()]).then(() => {
         renderBillsTable();
         renderBillsSettlement();
+        renderBillsIncomeSummary();
         updateBillsMonthLabel();
         renderBillsMonthCalendar();
         updateBillsSettledCheckbox();
     });
 }
 
-// ── Month navigation ──────────────────────────────────────────────────────────
+// ── Month navigation ─────────────────────────────────────────────────────────────────────────────
 
 function billsChangeMonth(delta) {
     let m = billsState.month + delta;
@@ -338,9 +383,10 @@ function billsChangeMonth(delta) {
     billsState.month   = m;
     billsState.year    = y;
     billsState.calYear = y;
-    loadBillsForMonth().then(() => {
+    Promise.all([loadBillsForMonth(), loadBillIncomes()]).then(() => {
         renderBillsTable();
         renderBillsSettlement();
+        renderBillsIncomeSummary();
         updateBillsMonthLabel();
         renderBillsMonthCalendar();
         updateBillsSettledCheckbox(true);
@@ -356,17 +402,48 @@ function _syncComparisonToMonth() {
     _renderComparisonChartData();
 }
 
-// ── View toggles ──────────────────────────────────────────────────────────────
+// ── View toggles ────────────────────────────────────────────────────────────────────────────
 
 function toggleBillsView(view) {
-    const panel = document.getElementById(`bills-view-${view}`);
-    const btn   = document.querySelector(`.bills-view-tab[data-view="${view}"]`);
-    if (!panel) return;
-    const nowHidden = panel.classList.toggle('hidden');
-    if (btn) btn.classList.toggle('active', !nowHidden);
+    const isMobile = window.innerWidth <= 750;
+    if (isMobile) {
+        ['calendar', 'costs', 'settlement'].forEach(v => {
+            document.getElementById(`bills-view-${v}`)?.classList.remove('mobile-active');
+            document.querySelector(`.bills-view-tab[data-view="${v}"]`)?.classList.remove('active');
+        });
+        document.getElementById(`bills-view-${view}`)?.classList.add('mobile-active');
+        document.querySelector(`.bills-view-tab[data-view="${view}"]`)?.classList.add('active');
+    } else {
+        const panel = document.getElementById(`bills-view-${view}`);
+        const btn   = document.querySelector(`.bills-view-tab[data-view="${view}"]`);
+        if (!panel) return;
+        const nowHidden = panel.classList.toggle('hidden');
+        if (btn) btn.classList.toggle('active', !nowHidden);
+    }
 }
 
-// ── Settled ───────────────────────────────────────────────────────────────────
+function initMobilePanels() {
+    if (window.innerWidth > 750) return;
+    ['calendar', 'costs', 'settlement'].forEach(v => {
+        document.getElementById(`bills-view-${v}`)?.classList.remove('mobile-active');
+        document.querySelector(`.bills-view-tab[data-view="${v}"]`)?.classList.remove('active');
+    });
+    document.getElementById('bills-view-calendar')?.classList.add('mobile-active');
+    document.querySelector('.bills-view-tab[data-view="calendar"]')?.classList.add('active');
+}
+
+window.addEventListener('resize', () => {
+    if (window.innerWidth > 750) {
+        ['calendar', 'costs', 'settlement'].forEach(v => {
+            const el = document.getElementById(`bills-view-${v}`);
+            if (el) { el.classList.remove('hidden'); el.classList.remove('mobile-active'); }
+        });
+    } else {
+        initMobilePanels();
+    }
+});
+
+// ── Settled ──────────────────────────────────────────────────────────────────────────────────────
 
 function updateBillsSettledCheckbox(celebrate = false) {
     const cb = document.getElementById('bills-settled-checkbox');
@@ -398,62 +475,9 @@ async function toggleBillsSettled(checked) {
     renderBillsMonthCalendar();
 }
 
-function celebrateBillsSettled() {
-    const old = document.getElementById('bills-fireworks-canvas');
-    if (old) old.remove();
-    const canvas = document.createElement('canvas');
-    canvas.id = 'bills-fireworks-canvas';
-    canvas.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:9998;';
-    document.body.appendChild(canvas);
-    const ctx = canvas.getContext('2d');
-    canvas.width  = window.innerWidth;
-    canvas.height = window.innerHeight;
-    const COLORS = ['#5a7a5e','#8fbc8f','#f0c040','#e07840','#b06050','#6a8aaa','#c8a060'];
-    const particles = [];
-    function spawnBurst(x, y) {
-        const color = COLORS[Math.floor(Math.random() * COLORS.length)];
-        for (let i = 0; i < 50; i++) {
-            const angle = (Math.PI * 2 / 50) * i + (Math.random() - 0.5) * 0.3;
-            const speed = Math.random() * 5 + 2;
-            particles.push({ x, y, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed-1,
-                             alpha: 1, radius: Math.random()*3+1, color, gravity: 0.12 });
-        }
-    }
-    const positions = [0.2, 0.5, 0.8, 0.35, 0.65, 0.5];
-    positions.forEach((xFrac, i) => {
-        setTimeout(() => spawnBurst(canvas.width*xFrac, canvas.height*(0.15+Math.random()*0.4)), i*280);
-    });
-    const bottle = document.createElement('div');
-    bottle.textContent = '🍾';
-    bottle.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-60%) scale(0) rotate(-15deg);font-size:90px;z-index:9999;pointer-events:none;transition:transform 0.45s cubic-bezier(0.34,1.56,0.64,1),opacity 0.4s ease;opacity:0;';
-    document.body.appendChild(bottle);
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-        bottle.style.transform = 'translate(-50%,-60%) scale(1) rotate(8deg)';
-        bottle.style.opacity   = '1';
-    }));
-    setTimeout(() => {
-        bottle.style.opacity   = '0';
-        bottle.style.transform = 'translate(-50%,-80%) scale(0.8) rotate(8deg)';
-        setTimeout(() => bottle.remove(), 400);
-    }, 1800);
-    const start = Date.now();
-    function frame() {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        for (let i = particles.length-1; i >= 0; i--) {
-            const p = particles[i];
-            p.vx *= 0.97; p.vy += p.gravity; p.x += p.vx; p.y += p.vy; p.alpha -= 0.016;
-            if (p.alpha <= 0) { particles.splice(i,1); continue; }
-            ctx.globalAlpha = p.alpha; ctx.fillStyle = p.color;
-            ctx.beginPath(); ctx.arc(p.x, p.y, p.radius, 0, Math.PI*2); ctx.fill();
-        }
-        ctx.globalAlpha = 1;
-        if (Date.now()-start < 3000 || particles.length > 0) requestAnimationFrame(frame);
-        else canvas.remove();
-    }
-    requestAnimationFrame(frame);
-}
+function celebrateBillsSettled() {}
 
-// ── Add/save bill ─────────────────────────────────────────────────────────────
+// ── Add/save bill ────────────────────────────────────────────────────────────────────────────
 
 async function openAddBillModal() {
     if (billsState.partners.length === 0) {
@@ -530,30 +554,27 @@ async function toggleBillSplit(id) {
     }
 }
 
-// ── Partners ──────────────────────────────────────────────────────────────────
+// ── Partners ──────────────────────────────────────────────────────────────────────────────────────
 
 function openAddPartnerModal() {
-    document.getElementById('partner-name-input').value   = '';
-    document.getElementById('partner-income-input').value = '';
-    const hint = document.getElementById('partner-income-hint');
-    if (hint) hint.textContent = '';
+    document.getElementById('partner-name-input').value = '';
     document.getElementById('add-partner-modal').classList.remove('hidden');
     document.getElementById('partner-name-input').focus();
 }
 
 async function savePartner() {
-    const name   = document.getElementById('partner-name-input').value.trim();
-    const income = parseFloat(document.getElementById('partner-income-input').value) || 0;
+    const name = document.getElementById('partner-name-input').value.trim();
     if (!name) { showToast('Ange ett namn', 'error'); return; }
     const res = await fetch('/api/bill-partners', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, income }),
+        body: JSON.stringify({ name }),
     });
     if (res.ok) {
         document.getElementById('add-partner-modal').classList.add('hidden');
         await loadBillPartners();
         renderBillsPartners();
+        renderBillsIncomeSummary();
         renderBillsSettlement();
         showToast('Deltagare tillagd', 'success');
     } else {
@@ -565,33 +586,26 @@ async function savePartner() {
 function openEditPartnerModal(id) {
     const p = billsState.partners.find(x => x.id === id);
     if (!p) return;
-    document.getElementById('edit-partner-id').value           = p.id;
-    document.getElementById('edit-partner-name-input').value   = p.name;
-    document.getElementById('edit-partner-income-input').value = p.income || '';
-    const hint = document.getElementById('edit-partner-income-hint');
-    if (hint) {
-        hint.textContent = p.income
-            ? `Nuvarande andel: ${p.share}%`
-            : 'Ange inkomst för att beräkna andel automatiskt';
-    }
+    document.getElementById('edit-partner-id').value         = p.id;
+    document.getElementById('edit-partner-name-input').value = p.name;
     document.getElementById('edit-partner-modal').classList.remove('hidden');
     document.getElementById('edit-partner-name-input').focus();
 }
 
 async function updatePartner() {
-    const id     = parseInt(document.getElementById('edit-partner-id').value);
-    const name   = document.getElementById('edit-partner-name-input').value.trim();
-    const income = parseFloat(document.getElementById('edit-partner-income-input').value) || 0;
+    const id   = parseInt(document.getElementById('edit-partner-id').value);
+    const name = document.getElementById('edit-partner-name-input').value.trim();
     if (!name) { showToast('Fyll i namn', 'error'); return; }
     const res = await fetch(`/api/bill-partners/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, income }),
+        body: JSON.stringify({ name }),
     });
     if (res.ok) {
         document.getElementById('edit-partner-modal').classList.add('hidden');
         await loadBillPartners();
         renderBillsPartners();
+        renderBillsIncomeSummary();
         renderBillsSettlement();
         showToast('Deltagare uppdaterad', 'success');
     } else {
@@ -603,44 +617,15 @@ async function updatePartner() {
 async function deletePartner(id) {
     const res = await fetch(`/api/bill-partners/${id}`, { method: 'DELETE' });
     if (res.ok) {
+        delete billsState.monthlyIncomes[id];
         await loadBillPartners();
         renderBillsPartners();
+        renderBillsIncomeSummary();
         renderBillsSettlement();
     }
 }
 
-function updatePartnerIncomeHint() {
-    const income = parseFloat(document.getElementById('partner-income-input').value) || 0;
-    const hint   = document.getElementById('partner-income-hint');
-    if (!hint) return;
-    if (income <= 0) { hint.textContent = ''; return; }
-    const othersTotal = billsState.partners.reduce((s, p) => s + (p.income || 0), 0);
-    const total = othersTotal + income;
-    const pct   = Math.round(income / total * 1000) / 10;
-    const otherPcts = billsState.partners.map(p => {
-        const share = Math.round((p.income || 0) / total * 1000) / 10;
-        return `${p.name} ${share}%`;
-    }).join(', ');
-    hint.textContent = `Din andel: ${pct}%` + (otherPcts ? ` · ${otherPcts}` : '');
-}
-
-function updateEditPartnerIncomeHint() {
-    const id     = parseInt(document.getElementById('edit-partner-id').value);
-    const income = parseFloat(document.getElementById('edit-partner-income-input').value) || 0;
-    const hint   = document.getElementById('edit-partner-income-hint');
-    if (!hint) return;
-    if (income <= 0) { hint.textContent = ''; return; }
-    const othersTotal = billsState.partners.reduce((s, p) => p.id !== id ? s + (p.income || 0) : s, 0);
-    const total = othersTotal + income;
-    const pct   = Math.round(income / total * 1000) / 10;
-    const otherPcts = billsState.partners.filter(p => p.id !== id).map(p => {
-        const share = Math.round((p.income || 0) / total * 1000) / 10;
-        return `${p.name} ${share}%`;
-    }).join(', ');
-    hint.textContent = `Din andel: ${pct}%` + (otherPcts ? ` · ${otherPcts}` : '');
-}
-
-// ── Comparison charts ─────────────────────────────────────────────────────────
+// ── Comparison charts ─────────────────────────────────────────────────────────────────────────
 
 async function toggleBillsComparison() {
     const section = document.getElementById('bills-comparison-section');
