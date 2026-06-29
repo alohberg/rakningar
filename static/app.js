@@ -432,15 +432,20 @@ function initMobilePanels() {
     document.querySelector('.bills-view-tab[data-view="calendar"]')?.classList.add('active');
 }
 
+let _lastInnerWidth = window.innerWidth;
 window.addEventListener('resize', () => {
-    if (window.innerWidth > 750) {
+    const w = window.innerWidth;
+    if (w > 750) {
         ['calendar', 'costs', 'settlement'].forEach(v => {
             const el = document.getElementById(`bills-view-${v}`);
             if (el) { el.classList.remove('hidden'); el.classList.remove('mobile-active'); }
         });
-    } else {
+    } else if (w !== _lastInnerWidth) {
+        // Only reset panels on actual width change — iOS Safari fires resize
+        // on scroll when the address bar hides/shows (height-only change)
         initMobilePanels();
     }
+    _lastInnerWidth = w;
 });
 
 // Keep modals above the keyboard on mobile
