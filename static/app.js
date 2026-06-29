@@ -107,7 +107,7 @@ function _refreshForMonth() {
     renderBillsTable();
     renderBillsSettlement();
     renderBillsMonthCalendar();
-    updateBillsSettledCheckbox(true);
+    updateBillsSettledCheckbox(false);
 }
 
 // ── Client-side settlement calculation ──────────────────────────────────────────────────────────
@@ -329,7 +329,13 @@ function renderBillsTable() {
 
 function renderBillsSettlement() {
     const body = document.getElementById('bills-settlement-body');
+    const card = document.getElementById('bills-view-settlement');
     if (!body) return;
+
+    const settledKey = `${billsState.year}-${billsState.month}`;
+    const settled    = billsState.settledMonths.has(settledKey);
+    if (card) card.classList.toggle('is-settled', settled);
+
     if (billsState.partners.length < 2) {
         body.innerHTML = '<p class="bills-settlement-empty">Lägg till minst två deltagare för att beräkna uppgörelsen.</p>';
         return;
@@ -339,8 +345,7 @@ function renderBillsSettlement() {
         body.innerHTML = '<p class="bills-settlement-empty">Inga delade räkningar den här månaden.</p>';
         return;
     }
-    const settledKey = `${billsState.year}-${billsState.month}`;
-    const settled    = billsState.settledMonths.has(settledKey);
+    const totalIncome = Object.values(billsState.monthlyIncomes).reduce((s, v) => s + v, 0);
     const partnerBlocks = data.partners.map(p => {
         const monthTotal   = p.fair_share + p.personal;
         const diff         = p.balance;
@@ -391,12 +396,18 @@ function renderBillsSettlement() {
                 <span>${escHtml(t.to)}</span>
                 <span class="bills-transfer-amount">${formatCurrency(t.amount)}</span>
             </div>`).join('');
+    const incomeRow = totalIncome > 0 ? `
+        <div class="bills-total-summary">
+            <span>Hushållets inkomst</span>
+            <strong>${formatCurrency(totalIncome)}/mån</strong>
+        </div>` : '';
     body.innerHTML = `
         ${partnerBlocks}
         <div class="bills-transfers-section">
             <div class="bills-transfers-title">${transfersTitle}</div>
             ${transferRows}
         </div>
+        ${incomeRow}
         <div class="bills-total-summary">
             <span>Delade kostnader</span>
             <strong>${formatCurrency(data.total_split)}</strong>
@@ -566,7 +577,82 @@ function toggleBillsSettled(checked) {
     renderBillsMonthCalendar();
 }
 
-function celebrateBillsSettled() {}
+function celebrateBillsSettled() {
+    const canvas = document.createElement('canvas');
+    canvas.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:9999;';
+    document.body.appendChild(canvas);
+    const ctx = canvas.getContext('2d');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    const COLORS = ['#e74c3c','#f39c12','#2ecc71','#3498db','#9b59b6','#e91e63','#1abc9c','#ff6b35','#ffd700'];
+
+    function makeParticles(count, originX) {
+        const arr = [];
+        for (let i = 0; i < count; i++) {
+            arr.push({
+                x: originX + (Math.random() - 0.5) * 60,
+                y: canvas.height * 0.8,
+                vx: (Math.random() - 0.5) * 10,
+                vy: -(Math.random() * 14 + 8),
+                color: COLORS[Math.floor(Math.random() * COLORS.length)],
+                size: Math.random() * 7 + 3,
+                rot: Math.random() * Math.PI * 2,
+                rotV: (Math.random() - 0.5) * 0.25,
+                rect: Math.random() > 0.4,
+                alpha: 1,
+            });
+        }
+        return arr;
+    }
+
+    let particles = makeParticles(80, canvas.width * 0.25);
+    particles = particles.concat(makeParticles(80, canvas.width * 0.75));
+
+    setTimeout(() => {
+        particles = particles.concat(makeParticles(60, canvas.width * 0.5));
+        particles = particles.concat(makeParticles(40, canvas.width * 0.1));
+        particles = particles.concat(makeParticles(40, canvas.width * 0.9));
+    }, 400);
+
+    const start = Date.now();
+    const DURATION = 3600;
+
+    function draw() {
+        const elapsed = Date.now() - start;
+        const t = elapsed / DURATION;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        particles.forEach(p => {
+            p.x  += p.vx;
+            p.y  += p.vy;
+            p.vy += 0.35;
+            p.rot += p.rotV;
+            p.alpha = Math.max(0, 1 - t * 1.3);
+
+            ctx.save();
+            ctx.globalAlpha = p.alpha;
+            ctx.fillStyle = p.color;
+            ctx.translate(p.x, p.y);
+            ctx.rotate(p.rot);
+            if (p.rect) {
+                ctx.fillRect(-p.size / 2, -p.size / 4, p.size, p.size / 2);
+            } else {
+                ctx.beginPath();
+                ctx.arc(0, 0, p.size / 2, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.restore();
+        });
+
+        if (t < 1) {
+            requestAnimationFrame(draw);
+        } else {
+            canvas.remove();
+        }
+    }
+    requestAnimationFrame(draw);
+}
 
 // ── Add/save bill ────────────────────────────────────────────────────────────────────────────────────
 
