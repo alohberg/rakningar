@@ -37,6 +37,7 @@ const billsState = {
     calYear:           new Date().getFullYear(),
     partners:          [],
     bills:             [],
+    allBills:          [],
     monthlyIncomes:    {},
     monthsWithBills:   new Set(),
     settledMonths:     new Set(),
@@ -46,70 +47,171 @@ const billsState = {
     selectedComparisonMonths: new Set(),
 };
 
-const _incomeTimers = {};
-let _settlementRenderGen = 0;
+// ── Persistence ──────────────────────────────────────────────────────────────────────────────────────
+
+function _saveState() {
+    try {
+        localStorage.setItem('rkn_partners', JSON.stringify(billsState.partners));
+        localStorage.setItem('rkn_all_bills', JSON.stringify(billsState.allBills));
+        localStorage.setItem('rkn_settled', JSON.stringify([...billsState.settledMonths]));
+    } catch(e) {}
+}
+
+function _loadState() {
+    try {
+        const p = localStorage.getItem('rkn_partners');
+        const b = localStorage.getItem('rkn_all_bills');
+        const s = localStorage.getItem('rkn_settled');
+        if (p) billsState.partners = JSON.parse(p);
+        if (b) billsState.allBills = JSON.parse(b);
+        if (s) billsState.settledMonths = new Set(JSON.parse(s));
+    } catch(e) {}
+}
+
+function _nextId(arr) {
+    return arr.length === 0 ? 1 : Math.max(...arr.map(x => x.id)) + 1;
+}
 
 function _incomeKey(y, m, pid) { return `rkn_inc_${y}_${m}_${pid}`; }
 function _persistIncome(y, m, pid, v) { try { localStorage.setItem(_incomeKey(y, m, pid), String(v)); } catch(e) {} }
-function _readLocalIncome(y, m, pid) { try { const v = localStorage.getItem(_incomeKey(y, m, pid)); return v !== null ? (parseFloat(v) || 0) : 0; } catch(e) { return 0; } }
+function _readLocalIncome(y, m, pid) {
+    try {
+        const v = localStorage.getItem(_incomeKey(y, m, pid));
+        return v !== null ? (parseFloat(v) || 0) : 0;
+    } catch(e) { return 0; }
+}
 
 // ── Boot ────────────────────────────────────────────────────────────────────────────────────────
 
-document.addEventListener('DOMContentLoaded', async () => {
-    await loadBillsPage();
+document.addEventListener('DOMContentLoaded', () => {
+    _loadState();
+    _refreshForMonth();
+    initMobilePanels();
 });
 
-async function loadBillsPage() {
-    await Promise.all([
-        loadBillPartners().catch(() => {}),
-        loadBillsForMonth().catch(() => {}),
-        loadBillsCalendarData().catch(() => {}),
-        loadBillIncomes().catch(() => {}),
-    ]);
+// ── Refresh for current month ──────────────────────────────────────────────────────────────────────
+
+function _refreshForMonth() {
+    billsState.bills = billsState.allBills.filter(
+        b => b.year === billsState.year && b.month === billsState.month
+    );
+    billsState.monthsWithBills = new Set(billsState.allBills.map(b => `${b.year}-${b.month}`));
+    billsState.monthlyIncomes = {};
+    billsState.partners.forEach(p => {
+        const inc = _readLocalIncome(billsState.year, billsState.month, p.id);
+        if (inc > 0) billsState.monthlyIncomes[p.id] = inc;
+    });
+    updateBillsMonthLabel();
     renderBillsPartners();
     renderBillsIncomeSummary();
     renderBillsTable();
-    try { await renderBillsSettlement(); } catch(e) {}
-    updateBillsMonthLabel();
+    renderBillsSettlement();
     renderBillsMonthCalendar();
     updateBillsSettledCheckbox(true);
-    initMobilePanels();
 }
 
-// ── Data loaders ───────────────────────────────────────────────────────────────────────────────────
+// ── Client-side settlement calculation ──────────────────────────────────────────────────────────
 
-async function loadBillPartners() {
-    const res = await fetch('/api/bill-partners');
-    billsState.partners = await res.json();
-}
+function _calculateSettlement() {
+    const { partners, bills, monthlyIncomes } = billsState;
+    if (partners.length < 2) return null;
+    const splitBills = bills.filter(b => b.is_split);
+    if (splitBills.length === 0) return null;
 
-async function loadBillIncomes() {
-    const res = await fetch(`/api/bill-incomes?year=${billsState.year}&month=${billsState.month}`);
-    if (res.ok) {
-        const data = await res.json();
-        billsState.monthlyIncomes = {};
-        data.forEach(d => { billsState.monthlyIncomes[d.partner_id] = d.income || 0; });
+    const totalAll   = bills.reduce((s, b) => s + b.amount, 0);
+    const totalSplit = splitBills.reduce((s, b) => s + b.amount, 0);
+
+    const paid = {}, personal = {};
+    partners.forEach(p => { paid[p.id] = 0; personal[p.id] = 0; });
+    splitBills.forEach(b => { paid[b.paid_by] = (paid[b.paid_by] || 0) + b.amount; });
+    bills.filter(b => !b.is_split).forEach(b => { personal[b.paid_by] = (personal[b.paid_by] || 0) + b.amount; });
+
+    const totalIncome = Object.values(monthlyIncomes).reduce((s, v) => s + v, 0);
+    const n = partners.length;
+    const sharesPct = {}, fairShares = {};
+
+    if (totalIncome > 0) {
+        partners.forEach(p => {
+            const inc = monthlyIncomes[p.id] || 0;
+            sharesPct[p.id]  = Math.round(inc / totalIncome * 1000) / 10;
+            fairShares[p.id] = Math.round(totalSplit * inc / totalIncome * 100) / 100;
+        });
+    } else {
+        partners.forEach(p => {
+            sharesPct[p.id]  = Math.round(100 / n * 10) / 10;
+            fairShares[p.id] = Math.round(totalSplit / n * 100) / 100;
+        });
     }
+
+    const balances = {};
+    partners.forEach(p => { balances[p.id] = Math.round((paid[p.id] - fairShares[p.id]) * 100) / 100; });
+
+    const partnerMap = {};
+    partners.forEach(p => { partnerMap[p.id] = p.name; });
+
+    let pos = partners.filter(p => balances[p.id] >  0.005).map(p => [balances[p.id], p.id]).sort((a, b) => b[0] - a[0]);
+    let neg = partners.filter(p => balances[p.id] < -0.005).map(p => [balances[p.id], p.id]).sort((a, b) => a[0] - b[0]);
+    const transfers = [];
+    while (pos.length && neg.length) {
+        const [creditAmt, creditor] = pos.shift();
+        const [debtAmt,   debtor]   = neg.shift();
+        const settle = Math.min(creditAmt, Math.abs(debtAmt));
+        transfers.push({ from: partnerMap[debtor], to: partnerMap[creditor], amount: Math.round(settle * 100) / 100 });
+        if (creditAmt - settle > 0.005) { pos.unshift([creditAmt - settle, creditor]); pos.sort((a, b) => b[0] - a[0]); }
+        if (Math.abs(debtAmt) - settle > 0.005) { neg.unshift([debtAmt + settle, debtor]); neg.sort((a, b) => a[0] - b[0]); }
+    }
+
+    return {
+        total:       Math.round(totalAll   * 100) / 100,
+        total_split: Math.round(totalSplit * 100) / 100,
+        partners: partners.map(p => ({
+            id:         p.id,
+            name:       p.name,
+            share:      sharesPct[p.id],
+            paid:       Math.round(paid[p.id]       * 100) / 100,
+            fair_share: fairShares[p.id],
+            balance:    balances[p.id],
+            personal:   Math.round(personal[p.id]   * 100) / 100,
+        })),
+        transfers,
+    };
 }
 
-async function loadBillsForMonth() {
-    const res = await fetch(`/api/bills?year=${billsState.year}&month=${billsState.month}`);
-    billsState.bills = await res.json();
-}
+// ── Comparison data calculation ──────────────────────────────────────────────────────────────────
 
-async function loadBillsCalendarData() {
-    const [monthsRes, settledRes] = await Promise.all([
-        fetch('/api/bills/months'),
-        fetch('/api/bills/settled'),
-    ]);
-    if (monthsRes.ok) {
-        const months = await monthsRes.json();
-        billsState.monthsWithBills = new Set(months.map(m => `${m.year}-${m.month}`));
-    }
-    if (settledRes.ok) {
-        const settled = await settledRes.json();
-        billsState.settledMonths = new Set(settled.map(m => `${m.year}-${m.month}`));
-    }
+function _getComparisonData() {
+    const { allBills, partners } = billsState;
+    const partnerNames = partners.map(p => p.name);
+    const partnerMap   = {};
+    partners.forEach(p => { partnerMap[p.id] = p.name; });
+
+    const monthMap = {};
+    allBills.forEach(b => {
+        const key = `${b.year}-${b.month}`;
+        if (!monthMap[key]) {
+            const empty = {};
+            partnerNames.forEach(n => { empty[n] = 0; });
+            monthMap[key] = {
+                year: b.year, month: b.month,
+                total: 0, total_split: 0, total_personal: 0,
+                per_partner_shared:   {...empty},
+                per_partner_personal: {...empty},
+            };
+        }
+        const m    = monthMap[key];
+        const name = partnerMap[b.paid_by] || '';
+        m.total   += b.amount;
+        if (b.is_split) {
+            m.total_split += b.amount;
+            if (name) m.per_partner_shared[name] = (m.per_partner_shared[name] || 0) + b.amount;
+        } else {
+            m.total_personal += b.amount;
+            if (name) m.per_partner_personal[name] = (m.per_partner_personal[name] || 0) + b.amount;
+        }
+    });
+
+    const months = Object.values(monthMap).sort((a, b) => a.year !== b.year ? a.year - b.year : a.month - b.month);
+    return { months, partners: partnerNames };
 }
 
 // ── Renderers ───────────────────────────────────────────────────────────────────────────────────────────────
@@ -129,13 +231,6 @@ function renderBillsIncomeSummary() {
     if (!el) return;
     const partners = billsState.partners;
     if (partners.length === 0) { el.innerHTML = ''; return; }
-    // Fill state from localStorage for any partner the server didn't return data for
-    partners.forEach(p => {
-        if (!billsState.monthlyIncomes[p.id]) {
-            const local = _readLocalIncome(billsState.year, billsState.month, p.id);
-            if (local > 0) billsState.monthlyIncomes[p.id] = local;
-        }
-    });
     const totalIncome = Object.values(billsState.monthlyIncomes).reduce((s, v) => s + v, 0);
     const monthLabel  = `${MONTH_NAMES_SV[billsState.month - 1]} ${billsState.year}`;
     const rows = partners.map(p => {
@@ -169,12 +264,7 @@ function onBillIncomeInput(partnerId, value) {
     billsState.monthlyIncomes[partnerId] = income;
     _persistIncome(billsState.year, billsState.month, partnerId, income);
     _updateIncomeShareBadges();
-    clearTimeout(_incomeTimers[partnerId]);
-    const [sy, sm] = [billsState.year, billsState.month];
-    _incomeTimers[partnerId] = setTimeout(async () => {
-        await saveBillIncome(partnerId, income, sy, sm);
-        if (billsState.year === sy && billsState.month === sm) await renderBillsSettlement();
-    }, 700);
+    renderBillsSettlement();
 }
 
 function _updateIncomeShareBadges() {
@@ -187,14 +277,6 @@ function _updateIncomeShareBadges() {
     });
     const totalEl = document.querySelector('.bills-income-block-total span:last-child');
     if (totalEl) totalEl.textContent = total > 0 ? formatCurrency(total) + '/mån' : '—';
-}
-
-async function saveBillIncome(partnerId, income, year = billsState.year, month = billsState.month) {
-    await fetch('/api/bill-incomes', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ partner_id: partnerId, year, month, income }),
-    });
 }
 
 function renderBillsPartners() {
@@ -245,37 +327,18 @@ function renderBillsTable() {
     if (totCell) totCell.textContent = formatCurrency(total);
 }
 
-async function renderBillsSettlement() {
-    const gen = ++_settlementRenderGen;
+function renderBillsSettlement() {
     const body = document.getElementById('bills-settlement-body');
     if (!body) return;
     if (billsState.partners.length < 2) {
-        if (gen !== _settlementRenderGen) return;
         body.innerHTML = '<p class="bills-settlement-empty">Lägg till minst två deltagare för att beräkna uppgörelsen.</p>';
         return;
     }
-    const splitBills = billsState.bills.filter(b => b.is_split);
-    if (splitBills.length === 0) {
-        if (gen !== _settlementRenderGen) return;
+    const data = _calculateSettlement();
+    if (!data) {
         body.innerHTML = '<p class="bills-settlement-empty">Inga delade räkningar den här månaden.</p>';
         return;
     }
-    // Seed incomes from localStorage before the server call so Vercel's ephemeral
-    // DB doesn't silently fall back to the default 50/50 split.
-    const [sy, sm] = [billsState.year, billsState.month];
-    billsState.partners.forEach(p => {
-        if (!billsState.monthlyIncomes[p.id]) {
-            const local = _readLocalIncome(sy, sm, p.id);
-            if (local > 0) billsState.monthlyIncomes[p.id] = local;
-        }
-    });
-    const incomeParam = billsState.partners
-        .map(p => `inc_${p.id}=${billsState.monthlyIncomes[p.id] || 0}`)
-        .join('&');
-    const res  = await fetch(`/api/bills/summary?year=${sy}&month=${sm}&${incomeParam}`);
-    if (gen !== _settlementRenderGen) return;
-    const data = await res.json();
-    if (gen !== _settlementRenderGen) return;
     const settledKey = `${billsState.year}-${billsState.month}`;
     const settled    = billsState.settledMonths.has(settledKey);
     const partnerBlocks = data.partners.map(p => {
@@ -285,8 +348,7 @@ async function renderBillsSettlement() {
         const balanceLabel = settled
             ? (diff >= 0 ? `Fick tillbaka ${formatCurrency(diff)}` : `Betalade ${formatCurrency(Math.abs(diff))}`)
             : (diff >= 0 ? `Får tillbaka ${formatCurrency(diff)}` : `Är skyldig ${formatCurrency(Math.abs(diff))}`);
-        const partnerData  = billsState.partners.find(x => x.name === p.name);
-        const monthIncome  = partnerData ? (billsState.monthlyIncomes[partnerData.id] || 0) : 0;
+        const monthIncome  = billsState.monthlyIncomes[p.id] || 0;
         const incomeLabel  = monthIncome > 0
             ? `<span class="bills-partner-income-label">${formatCurrency(monthIncome)}/mån</span>`
             : '';
@@ -395,14 +457,7 @@ function billsJumpToMonth(year, month) {
     billsState.year    = year;
     billsState.month   = month;
     billsState.calYear = year;
-    Promise.all([loadBillsForMonth(), loadBillIncomes()]).then(() => {
-        renderBillsTable();
-        renderBillsSettlement();
-        renderBillsIncomeSummary();
-        updateBillsMonthLabel();
-        renderBillsMonthCalendar();
-        updateBillsSettledCheckbox();
-    });
+    _refreshForMonth();
 }
 
 // ── Month navigation ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -415,20 +470,14 @@ function billsChangeMonth(delta) {
     billsState.month   = m;
     billsState.year    = y;
     billsState.calYear = y;
-    Promise.all([loadBillsForMonth(), loadBillIncomes()]).then(() => {
-        renderBillsTable();
-        renderBillsSettlement();
-        renderBillsIncomeSummary();
-        updateBillsMonthLabel();
-        renderBillsMonthCalendar();
-        updateBillsSettledCheckbox(true);
-        _syncComparisonToMonth();
-    });
+    _refreshForMonth();
+    _syncComparisonToMonth();
 }
 
 function _syncComparisonToMonth() {
-    if (!billsState.comparisonVisible || !billsState.comparisonData) return;
+    if (!billsState.comparisonVisible) return;
     billsState.selectedComparisonMonths = new Set([`${billsState.year}-${billsState.month}`]);
+    billsState.comparisonData = _getComparisonData();
     _renderComparisonMonthChips(billsState.comparisonData);
     destroyBillsCharts();
     _renderComparisonChartData();
@@ -473,14 +522,12 @@ window.addEventListener('resize', () => {
             if (el) { el.classList.remove('hidden'); el.classList.remove('mobile-active'); }
         });
     } else if (w !== _lastInnerWidth) {
-        // Only reset panels on actual width change — iOS Safari fires resize
-        // on scroll when the address bar hides/shows (height-only change)
+        // iOS Safari fires resize on scroll when address bar hides/shows (height-only change)
         initMobilePanels();
     }
     _lastInnerWidth = w;
 });
 
-// Keep modals above the keyboard on mobile
 if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', _adjustForKeyboard);
     window.visualViewport.addEventListener('scroll', _adjustForKeyboard);
@@ -505,22 +552,15 @@ function updateBillsSettledCheckbox(celebrate = false) {
     if (settled && celebrate) celebrateBillsSettled();
 }
 
-async function toggleBillsSettled(checked) {
-    const year  = billsState.year;
-    const month = billsState.month;
-    const key   = `${year}-${month}`;
+function toggleBillsSettled(checked) {
+    const key = `${billsState.year}-${billsState.month}`;
     if (checked) {
-        await fetch('/api/bills/settled', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ year, month }),
-        });
         billsState.settledMonths.add(key);
         celebrateBillsSettled();
     } else {
-        await fetch(`/api/bills/settled/${year}/${month}`, { method: 'DELETE' });
         billsState.settledMonths.delete(key);
     }
+    _saveState();
     updateBillsSettledCheckbox();
     renderBillsSettlement();
     renderBillsMonthCalendar();
@@ -530,11 +570,7 @@ function celebrateBillsSettled() {}
 
 // ── Add/save bill ────────────────────────────────────────────────────────────────────────────────────
 
-async function openAddBillModal() {
-    if (billsState.partners.length === 0) {
-        await loadBillPartners();
-        renderBillsPartners();
-    }
+function openAddBillModal() {
     if (billsState.partners.length === 0) {
         showToast('Lägg till minst en deltagare först', 'error');
         return;
@@ -542,8 +578,8 @@ async function openAddBillModal() {
     const sel = document.getElementById('bill-payer-inline');
     if (sel) sel.innerHTML = billsState.partners.map(p =>
         `<option value="${p.id}">${escHtml(p.name)}</option>`).join('');
-    document.getElementById('bill-name-inline').value   = '';
-    document.getElementById('bill-amount-inline').value = '';
+    document.getElementById('bill-name-inline').value    = '';
+    document.getElementById('bill-amount-inline').value  = '';
     document.getElementById('bill-split-inline').checked = true;
     document.getElementById('add-bill-modal').classList.remove('hidden');
     setTimeout(() => document.getElementById('bill-name-inline').focus(), 50);
@@ -553,7 +589,7 @@ function closeAddBillModal() {
     document.getElementById('add-bill-modal').classList.add('hidden');
 }
 
-async function saveBillInline() {
+function saveBillInline() {
     const name    = (document.getElementById('bill-name-inline').value || '').trim();
     const amount  = parseFloat(document.getElementById('bill-amount-inline').value);
     const paidBy  = parseInt(document.getElementById('bill-payer-inline').value);
@@ -562,47 +598,38 @@ async function saveBillInline() {
         showToast('Fyll i namn och belopp', 'error');
         return;
     }
-    const res = await fetch('/api/bills', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, amount, paid_by: paidBy,
-                               year: billsState.year, month: billsState.month, is_split: isSplit }),
+    const partner = billsState.partners.find(p => p.id === paidBy);
+    billsState.allBills.push({
+        id:           _nextId(billsState.allBills),
+        name,
+        amount,
+        paid_by:      paidBy,
+        partner_name: partner ? partner.name : '',
+        year:         billsState.year,
+        month:        billsState.month,
+        is_split:     isSplit,
     });
-    if (res.ok) {
-        closeAddBillModal();
-        await loadBillsForMonth();
-        renderBillsTable();
-        await renderBillsSettlement();
-        await loadBillsCalendarData();
-        renderBillsMonthCalendar();
-        if (billsState.comparisonVisible) await renderBillsComparisonCharts();
-        showToast('Räkning sparad', 'success');
-    } else {
-        showToast('Kunde inte spara räkning', 'error');
-    }
+    _saveState();
+    closeAddBillModal();
+    _refreshForMonth();
+    if (billsState.comparisonVisible) _refreshComparisonCharts();
+    showToast('Räkning sparad', 'success');
 }
 
-async function deleteBill(id) {
-    const res = await fetch(`/api/bills/${id}`, { method: 'DELETE' });
-    if (res.ok) {
-        await loadBillsForMonth();
-        renderBillsTable();
-        renderBillsSettlement();
-        await loadBillsCalendarData();
-        renderBillsMonthCalendar();
-    }
+function deleteBill(id) {
+    billsState.allBills = billsState.allBills.filter(b => b.id !== id);
+    _saveState();
+    _refreshForMonth();
+    if (billsState.comparisonVisible) _refreshComparisonCharts();
 }
 
-async function toggleBillSplit(id) {
-    const res = await fetch(`/api/bills/${id}/toggle-split`, { method: 'PATCH' });
-    if (res.ok) {
-        const data = await res.json();
-        const bill = billsState.bills.find(b => b.id === id);
-        if (bill) bill.is_split = data.is_split;
-        renderBillsTable();
-        await renderBillsSettlement();
-        if (billsState.comparisonVisible) await renderBillsComparisonCharts();
-    }
+function toggleBillSplit(id) {
+    const bill = billsState.allBills.find(b => b.id === id);
+    if (!bill) return;
+    bill.is_split = !bill.is_split;
+    _saveState();
+    _refreshForMonth();
+    if (billsState.comparisonVisible) _refreshComparisonCharts();
 }
 
 // ── Partners ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -613,25 +640,20 @@ function openAddPartnerModal() {
     setTimeout(() => document.getElementById('partner-name-input').focus(), 100);
 }
 
-async function savePartner() {
+function savePartner() {
     const name = document.getElementById('partner-name-input').value.trim();
     if (!name) { showToast('Ange ett namn', 'error'); return; }
-    const res = await fetch('/api/bill-partners', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
-    });
-    if (res.ok) {
-        document.getElementById('add-partner-modal').classList.add('hidden');
-        await loadBillPartners();
-        renderBillsPartners();
-        renderBillsIncomeSummary();
-        renderBillsSettlement();
-        showToast('Deltagare tillagd', 'success');
-    } else {
-        const err = await res.json();
-        showToast(err.error || 'Kunde inte spara deltagare', 'error');
+    if (billsState.partners.some(p => p.name.toLowerCase() === name.toLowerCase())) {
+        showToast('Deltagare finns redan', 'error');
+        return;
     }
+    billsState.partners.push({ id: _nextId(billsState.partners), name });
+    _saveState();
+    document.getElementById('add-partner-modal').classList.add('hidden');
+    renderBillsPartners();
+    renderBillsIncomeSummary();
+    renderBillsSettlement();
+    showToast('Deltagare tillagd', 'success');
 }
 
 function openEditPartnerModal(id) {
@@ -643,42 +665,46 @@ function openEditPartnerModal(id) {
     document.getElementById('edit-partner-name-input').focus();
 }
 
-async function updatePartner() {
-    const id   = parseInt(document.getElementById('edit-partner-id').value);
-    const name = document.getElementById('edit-partner-name-input').value.trim();
+function updatePartner() {
+    const id      = parseInt(document.getElementById('edit-partner-id').value);
+    const name    = document.getElementById('edit-partner-name-input').value.trim();
     if (!name) { showToast('Fyll i namn', 'error'); return; }
-    const res = await fetch(`/api/bill-partners/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
-    });
-    if (res.ok) {
-        document.getElementById('edit-partner-modal').classList.add('hidden');
-        await loadBillPartners();
-        renderBillsPartners();
-        renderBillsIncomeSummary();
-        renderBillsSettlement();
-        showToast('Deltagare uppdaterad', 'success');
-    } else {
-        const err = await res.json();
-        showToast(err.error || 'Kunde inte uppdatera', 'error');
-    }
+    const partner = billsState.partners.find(p => p.id === id);
+    if (!partner) return;
+    partner.name = name;
+    billsState.allBills.forEach(b => { if (b.paid_by === id) b.partner_name = name; });
+    _saveState();
+    document.getElementById('edit-partner-modal').classList.add('hidden');
+    renderBillsPartners();
+    renderBillsIncomeSummary();
+    renderBillsTable();
+    renderBillsSettlement();
+    showToast('Deltagare uppdaterad', 'success');
 }
 
-async function deletePartner(id) {
-    const res = await fetch(`/api/bill-partners/${id}`, { method: 'DELETE' });
-    if (res.ok) {
-        delete billsState.monthlyIncomes[id];
-        await loadBillPartners();
-        renderBillsPartners();
-        renderBillsIncomeSummary();
-        renderBillsSettlement();
-    }
+function deletePartner(id) {
+    billsState.partners = billsState.partners.filter(p => p.id !== id);
+    billsState.allBills = billsState.allBills.filter(b => b.paid_by !== id);
+    delete billsState.monthlyIncomes[id];
+    _saveState();
+    _refreshForMonth();
+    showToast('Deltagare borttagen', 'success');
 }
 
 // ── Comparison charts ──────────────────────────────────────────────────────────────────────────────────
 
-async function toggleBillsComparison() {
+function _refreshComparisonCharts() {
+    billsState.comparisonData = _getComparisonData();
+    const currentKey = `${billsState.year}-${billsState.month}`;
+    if (!billsState.selectedComparisonMonths || billsState.selectedComparisonMonths.size === 0) {
+        billsState.selectedComparisonMonths = new Set([currentKey]);
+    }
+    _renderComparisonMonthChips(billsState.comparisonData);
+    destroyBillsCharts();
+    _renderComparisonChartData();
+}
+
+function toggleBillsComparison() {
     const section = document.getElementById('bills-comparison-section');
     const btn     = document.getElementById('bills-comparison-btn');
     if (!section) return;
@@ -686,7 +712,7 @@ async function toggleBillsComparison() {
     if (billsState.comparisonVisible) {
         section.classList.remove('hidden');
         if (btn) btn.classList.add('active');
-        await renderBillsComparisonCharts();
+        _refreshComparisonCharts();
     } else {
         section.classList.add('hidden');
         if (btn) btn.classList.remove('active');
@@ -701,24 +727,6 @@ function destroyBillsCharts() {
 }
 
 function _compMonthKey(m) { return `${m.year}-${m.month}`; }
-
-async function renderBillsComparisonCharts() {
-    destroyBillsCharts();
-    const res  = await fetch('/api/bills/comparison');
-    const data = await res.json();
-    if (!data.months || data.months.length === 0) {
-        const section = document.getElementById('bills-comparison-section');
-        if (section) section.innerHTML = '<p style="color:var(--text-muted);font-size:12px;padding:8px 0">Inga data att jämföra ännu.</p>';
-        return;
-    }
-    billsState.comparisonData = data;
-    const currentKey = `${billsState.year}-${billsState.month}`;
-    if (!billsState.selectedComparisonMonths || billsState.selectedComparisonMonths.size === 0) {
-        billsState.selectedComparisonMonths = new Set([currentKey]);
-    }
-    _renderComparisonMonthChips(data);
-    _renderComparisonChartData();
-}
 
 function _renderComparisonMonthChips(data) {
     const section = document.getElementById('bills-comparison-section');
@@ -768,7 +776,15 @@ function _zeroMonth(year, month, partners) {
 }
 
 function _renderComparisonChartData() {
-    const data     = billsState.comparisonData;
+    const data = billsState.comparisonData;
+    if (!data || !data.months || data.months.length === 0) {
+        const section = document.getElementById('bills-comparison-section');
+        if (section) {
+            const chartsDiv = section.querySelector('.bills-comparison-charts');
+            if (chartsDiv) chartsDiv.innerHTML = '<p style="color:var(--text-muted);font-size:12px;padding:8px 0">Inga data att jämföra ännu.</p>';
+        }
+        return;
+    }
     const monthMap = {};
     data.months.forEach(m => { monthMap[_compMonthKey(m)] = m; });
     const filtered = Array.from(billsState.selectedComparisonMonths)
@@ -782,7 +798,7 @@ function _renderComparisonChartData() {
             const [y, mo] = key.split('-').map(Number);
             return _zeroMonth(y, mo, data.partners);
         });
-    const labels            = filtered.map(m => `${MONTH_NAMES_SV[m.month - 1].substring(0,3)} ${m.year}`);
+    const labels             = filtered.map(m => `${MONTH_NAMES_SV[m.month - 1].substring(0,3)} ${m.year}`);
     const STACK_GREEN        = 'rgba(76,175,80,0.82)';
     const STACK_GREEN_BORDER = 'rgba(56,142,60,1)';
     const STACK_YELLOW        = 'rgba(255,193,7,0.88)';
