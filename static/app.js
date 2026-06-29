@@ -45,6 +45,7 @@ const billsState = {
     comparisonCharts:  {},
     comparisonData:    null,
     selectedComparisonMonths: new Set(),
+    analysisView:      'income',
 };
 
 // ── Persistence ──────────────────────────────────────────────────────────────────────────────────────
@@ -798,7 +799,7 @@ function toggleBillsComparison() {
     if (billsState.comparisonVisible) {
         section.classList.remove('hidden');
         if (btn) btn.classList.add('active');
-        _refreshComparisonCharts();
+        requestAnimationFrame(() => _refreshComparisonCharts());
     } else {
         section.classList.add('hidden');
         if (btn) btn.classList.remove('active');
@@ -810,6 +811,14 @@ function toggleBillsComparison() {
 function destroyBillsCharts() {
     Object.values(billsState.comparisonCharts).forEach(c => { try { c.destroy(); } catch(e) {} });
     billsState.comparisonCharts = {};
+}
+
+function setAnalysisView(view) {
+    const hasBills = billsState.comparisonData && billsState.comparisonData.months && billsState.comparisonData.months.length > 0;
+    if ((view === 'total' || view === 'perperson') && !hasBills) return;
+    billsState.analysisView = view;
+    destroyBillsCharts();
+    _renderComparisonChartData();
 }
 
 function _getIncomeForMonths(monthKeys) {
@@ -873,20 +882,38 @@ function _zeroMonth(year, month, partners) {
 }
 
 function _renderComparisonChartData() {
-    const data = billsState.comparisonData;
+    const data     = billsState.comparisonData;
     const partners = billsState.partners;
     if (partners.length === 0) return;
+
+    const hasBills = data && data.months && data.months.length > 0;
+
+    // Keep analysisView in sync — fall back to income if bill views aren't available
+    if (!hasBills && billsState.analysisView !== 'income') {
+        billsState.analysisView = 'income';
+    }
+
+    // Update tab active/disabled states
+    document.querySelectorAll('.bills-analysis-tab').forEach(btn => {
+        const v = btn.dataset.view;
+        btn.classList.toggle('active', v === billsState.analysisView);
+        const billView = v === 'total' || v === 'perperson';
+        btn.disabled = billView && !hasBills;
+        btn.classList.toggle('disabled', billView && !hasBills);
+    });
 
     const sortedKeys = Array.from(billsState.selectedComparisonMonths).sort((a, b) => {
         const [ay, am] = a.split('-').map(Number);
         const [by, bm] = b.split('-').map(Number);
         return ay !== by ? ay - by : am - bm;
     });
-
     const labels = sortedKeys.map(key => {
         const [y, mo] = key.split('-').map(Number);
-        return `${MONTH_NAMES_SV[mo - 1].substring(0,3)} ${y}`;
+        return `${MONTH_NAMES_SV[mo - 1].substring(0, 3)} ${y}`;
     });
+
+    const ctx = document.getElementById('bills-analysis-chart');
+    if (!ctx) return;
 
     const PARTNER_COLORS = [
         ['rgba(90,122,94,0.85)',  'rgba(60,95,65,1)'],
@@ -894,68 +921,43 @@ function _renderComparisonChartData() {
         ['rgba(180,110,80,0.85)', 'rgba(150,80,55,1)'],
         ['rgba(160,90,160,0.85)', 'rgba(130,60,130,1)'],
     ];
-
-    // Income chart — always shown when partners exist
-    const incomeMonths = _getIncomeForMonths(sortedKeys);
-    const hasAnyIncome = incomeMonths.some(m => Object.values(m.incomes).some(v => v > 0));
-    const ctxIncome = document.getElementById('bills-income-chart');
-    const incomeCard = ctxIncome && ctxIncome.closest('.bills-chart-card');
-    if (ctxIncome) {
-        if (hasAnyIncome) {
-            if (incomeCard) incomeCard.style.display = '';
-            const incomeDatasets = partners.map((p, i) => {
-                const [bg, border] = PARTNER_COLORS[i % PARTNER_COLORS.length];
-                return {
-                    label: p.name,
-                    data: incomeMonths.map(m => m.incomes[p.name] || 0),
-                    backgroundColor: bg, borderColor: border, borderWidth: 1, borderRadius: 4,
-                };
-            });
-            billsState.comparisonCharts.income = new Chart(ctxIncome, {
-                type: 'bar',
-                data: { labels, datasets: incomeDatasets },
-                options: {
-                    responsive: true, maintainAspectRatio: true,
-                    scales: { y: { beginAtZero: true, ticks: { callback: v => v + ' kr', font: { size: 10 } } } },
-                    plugins: { legend: { position: 'top', labels: { font: { size: 10 } } } },
-                },
-            });
-        } else {
-            if (incomeCard) incomeCard.style.display = 'none';
-        }
-    }
-
-    // Bill charts — only shown when there are bills
-    const hasBills = data && data.months && data.months.length > 0;
-    const monthMap = {};
-    if (hasBills) data.months.forEach(m => { monthMap[_compMonthKey(m)] = m; });
-    const filtered = sortedKeys.map(key => {
-        if (monthMap[key]) return monthMap[key];
-        const [y, mo] = key.split('-').map(Number);
-        return _zeroMonth(y, mo, data ? data.partners : []);
-    });
-
-    const STACK_GREEN        = 'rgba(76,175,80,0.82)';
-    const STACK_GREEN_BORDER = 'rgba(56,142,60,1)';
+    const STACK_GREEN         = 'rgba(76,175,80,0.82)';
+    const STACK_GREEN_BORDER  = 'rgba(56,142,60,1)';
     const STACK_YELLOW        = 'rgba(255,193,7,0.88)';
     const STACK_YELLOW_BORDER = 'rgba(245,168,0,1)';
-    const stackedScales = {
-        x: { stacked: true },
-        y: { stacked: true, beginAtZero: true, ticks: { callback: v => v + ' kr', font: { size: 10 } } },
-    };
+    const PERSONAL_COLORS = [
+        ['rgba(255,193,7,0.88)',  'rgba(245,168,0,1)'],
+        ['rgba(255,152,0,0.88)',  'rgba(230,120,0,1)'],
+        ['rgba(255,235,59,0.88)', 'rgba(220,200,0,1)'],
+        ['rgba(255,111,0,0.88)',  'rgba(230,80,0,1)'],
+    ];
 
-    const ctxTotal = document.getElementById('bills-total-chart');
-    const totalCard = ctxTotal && ctxTotal.closest('.bills-chart-card');
-    if (ctxTotal) {
-        if (hasBills) {
-            if (totalCard) totalCard.style.display = '';
-            const PERSONAL_COLORS = [
-                ['rgba(255,193,7,0.88)',  'rgba(245,168,0,1)'],
-                ['rgba(255,152,0,0.88)',  'rgba(230,120,0,1)'],
-                ['rgba(255,235,59,0.88)', 'rgba(220,200,0,1)'],
-                ['rgba(255,111,0,0.88)',  'rgba(230,80,0,1)'],
-            ];
-            const totalDatasets = [
+    let datasets, scales;
+
+    if (billsState.analysisView === 'income') {
+        const incomeMonths = _getIncomeForMonths(sortedKeys);
+        datasets = partners.map((p, i) => {
+            const [bg, border] = PARTNER_COLORS[i % PARTNER_COLORS.length];
+            return { label: p.name, data: incomeMonths.map(m => m.incomes[p.name] || 0),
+                     backgroundColor: bg, borderColor: border, borderWidth: 1, borderRadius: 4 };
+        });
+        scales = { y: { beginAtZero: true, ticks: { callback: v => v + ' kr', font: { size: 10 } } } };
+
+    } else {
+        const monthMap = {};
+        data.months.forEach(m => { monthMap[_compMonthKey(m)] = m; });
+        const filtered = sortedKeys.map(key => {
+            if (monthMap[key]) return monthMap[key];
+            const [y, mo] = key.split('-').map(Number);
+            return _zeroMonth(y, mo, data.partners || []);
+        });
+        scales = {
+            x: { stacked: true },
+            y: { stacked: true, beginAtZero: true, ticks: { callback: v => v + ' kr', font: { size: 10 } } },
+        };
+
+        if (billsState.analysisView === 'total') {
+            datasets = [
                 { label: 'Delade kostnader', data: filtered.map(m => m.total_split),
                   backgroundColor: STACK_GREEN, borderColor: STACK_GREEN_BORDER, borderWidth: 1, borderSkipped: false, stack: 'total' },
                 ...(data.partners || []).map((name, i) => {
@@ -964,37 +966,21 @@ function _renderComparisonChartData() {
                              backgroundColor: bg, borderColor: border, borderWidth: 1, borderSkipped: false, stack: 'total' };
                 }),
             ];
-            billsState.comparisonCharts.total = new Chart(ctxTotal, {
-                type: 'bar',
-                data: { labels, datasets: totalDatasets },
-                options: { responsive: true, maintainAspectRatio: true, scales: stackedScales,
-                           plugins: { legend: { position: 'top', labels: { font: { size: 10 } } } } },
-            });
         } else {
-            if (totalCard) totalCard.style.display = 'none';
+            datasets = [];
+            (data.partners || []).forEach(name => {
+                datasets.push({ label: `${name} – Delade`, data: filtered.map(m => m.per_partner_shared[name] || 0),
+                                backgroundColor: STACK_GREEN, borderColor: STACK_GREEN_BORDER, borderWidth: 1, borderSkipped: false, stack: name });
+                datasets.push({ label: `${name} – Personliga`, data: filtered.map(m => m.per_partner_personal[name] || 0),
+                                backgroundColor: STACK_YELLOW, borderColor: STACK_YELLOW_BORDER, borderWidth: 1, borderSkipped: false, stack: name });
+            });
         }
     }
 
-    const ctxPP = document.getElementById('bills-per-person-chart');
-    const ppCard = ctxPP && ctxPP.closest('.bills-chart-card');
-    if (ctxPP) {
-        if (hasBills && partners.length > 0) {
-            if (ppCard) ppCard.style.display = '';
-            const ppDatasets = [];
-            (data.partners || []).forEach(name => {
-                ppDatasets.push({ label: `${name} – Delade`, data: filtered.map(m => m.per_partner_shared[name] || 0),
-                                  backgroundColor: STACK_GREEN, borderColor: STACK_GREEN_BORDER, borderWidth: 1, borderSkipped: false, stack: name });
-                ppDatasets.push({ label: `${name} – Personliga`, data: filtered.map(m => m.per_partner_personal[name] || 0),
-                                  backgroundColor: STACK_YELLOW, borderColor: STACK_YELLOW_BORDER, borderWidth: 1, borderSkipped: false, stack: name });
-            });
-            billsState.comparisonCharts.perPerson = new Chart(ctxPP, {
-                type: 'bar',
-                data: { labels, datasets: ppDatasets },
-                options: { responsive: true, maintainAspectRatio: true, scales: stackedScales,
-                           plugins: { legend: { position: 'top', labels: { font: { size: 10 } } } } },
-            });
-        } else {
-            if (ppCard) ppCard.style.display = 'none';
-        }
-    }
+    billsState.comparisonCharts.main = new Chart(ctx, {
+        type: 'bar',
+        data: { labels, datasets },
+        options: { responsive: true, maintainAspectRatio: false, scales,
+                   plugins: { legend: { position: 'top', labels: { font: { size: 10 } } } } },
+    });
 }
