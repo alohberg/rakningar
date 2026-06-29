@@ -443,6 +443,20 @@ window.addEventListener('resize', () => {
     }
 });
 
+// Keep modals above the keyboard on mobile
+if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', _adjustForKeyboard);
+    window.visualViewport.addEventListener('scroll', _adjustForKeyboard);
+}
+
+function _adjustForKeyboard() {
+    const modal = document.querySelector('.modal:not(.hidden)');
+    if (!modal) return;
+    const vv = window.visualViewport;
+    const keyboardHeight = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+    modal.style.paddingBottom = keyboardHeight > 50 ? `${keyboardHeight}px` : '';
+}
+
 // ── Settled ──────────────────────────────────────────────────────────────────────────────────────────────
 
 function updateBillsSettledCheckbox(celebrate = false) {
@@ -559,7 +573,7 @@ async function toggleBillSplit(id) {
 function openAddPartnerModal() {
     document.getElementById('partner-name-input').value = '';
     document.getElementById('add-partner-modal').classList.remove('hidden');
-    document.getElementById('partner-name-input').focus();
+    setTimeout(() => document.getElementById('partner-name-input').focus(), 100);
 }
 
 async function savePartner() {

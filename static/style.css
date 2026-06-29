@@ -320,13 +320,22 @@ body {
     /* Swap tab label */
     .tab-label-desktop { display: none; }
     .tab-label-mobile  { display: inline; }
+
+    /* Native app feel: remove outer gutter, panels edge-to-edge */
+    #main-content { padding: 0 0 max(80px, calc(64px + env(safe-area-inset-bottom))); }
+    .page-header { padding: 12px 16px; margin-bottom: 0; }
+    .bills-header { padding: 10px 16px 10px; margin-bottom: 0; }
+    .bills-panels { gap: 0; }
+    .bills-view.card {
+        border-radius: 0;
+        border-left: none;
+        border-right: none;
+        border-top: none;
+        padding: 16px;
+    }
 }
 
 @media (max-width: 480px) {
-    #main-content {
-        padding-bottom: max(48px, calc(24px + env(safe-area-inset-bottom)));
-    }
-
     /* Tab row wraps: tabs take full width, month nav centres below */
     .bills-view-tabs { flex: 0 0 100%; }
     .bills-view-tab  { flex: 1; justify-content: center; padding: 7px 12px; font-size: 13px; }
