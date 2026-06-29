@@ -221,7 +221,12 @@ body {
 
 .bills-comparison-btn { font-size: 12px; width: 100%; justify-content: center; }
 .bills-comparison-btn.active { background: var(--border-light); color: var(--text-primary); border-color: var(--text-muted); }
-.bills-comparison-charts { display: flex; flex-direction: column; gap: 12px; margin-top: 4px; }
+.bills-analysis-tabs { display: flex; gap: 4px; margin-top: 10px; flex-wrap: wrap; }
+.bills-analysis-tab { padding: 5px 14px; font-size: 12px; font-weight: 500; background: none; border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; color: var(--text-muted); font-family: inherit; transition: color 0.15s, background 0.15s; }
+.bills-analysis-tab:hover:not(:disabled) { color: var(--text-primary); background: var(--border-light); }
+.bills-analysis-tab.active { background: var(--border-light); color: var(--text-primary); border-color: var(--border); font-weight: 600; border-bottom: 2px solid var(--accent); }
+.bills-analysis-tab:disabled, .bills-analysis-tab.disabled { opacity: 0.35; cursor: not-allowed; }
+.bills-comparison-charts { margin-top: 10px; }
 .bills-chart-card { margin-top: 10px; padding: 10px; }
 .bills-chart-card h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-muted); margin-bottom: 8px; }
 
