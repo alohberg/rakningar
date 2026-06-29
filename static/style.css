@@ -22,6 +22,12 @@
     --radius: 16px;
     --radius-sm: 10px;
     --radius-xs: 6px;
+    /* Spacing scale */
+    --space-xs: 8px;
+    --space-sm: 12px;
+    --space-md: 16px;
+    --space-lg: 24px;
+    --space-xl: 40px;
 }
 
 body {
@@ -77,7 +83,7 @@ body {
 .btn:hover { border-color: var(--text-muted); background: var(--border-light); }
 .btn-primary { background-color: var(--accent); color: #faf7f2; border-color: var(--accent); }
 .btn-primary:hover { background-color: #4d6a50; border-color: #4d6a50; }
-.btn-small { padding: 5px 12px; font-size: 12px; border-radius: 8px; }
+.btn-small { padding: 5px 12px; font-size: 12px; border-radius: 8px; min-height: 36px; }
 
 /* ── Card ── */
 .card {
@@ -123,14 +129,14 @@ body {
     border-bottom: 1px solid var(--border);
 }
 .modal-header h2 { font-size: 1.1rem; font-weight: 600; }
-.close-btn { background: none; border: none; font-size: 20px; cursor: pointer; color: var(--text-muted); padding: 4px; line-height: 1; }
+.close-btn { background: none; border: none; font-size: 20px; cursor: pointer; color: var(--text-muted); padding: 8px; line-height: 1; min-width: 36px; min-height: 36px; display: flex; align-items: center; justify-content: center; }
 .close-btn:hover { color: var(--text-primary); }
 
 /* ── Forms ── */
 .form-group { margin-bottom: 16px; }
 .form-group label { display: block; font-size: 13px; font-weight: 500; color: var(--text-secondary); margin-bottom: 6px; }
 .form-group input,
-.form-group select { width: 100%; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 14px; background: var(--bg); color: var(--text-primary); transition: border-color 0.2s ease; font-family: inherit; }
+.form-group select { width: 100%; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 16px; background: var(--bg); color: var(--text-primary); transition: border-color 0.2s ease; font-family: inherit; }
 .form-group input:focus,
 .form-group select:focus { outline: none; border-color: var(--accent); }
 .form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
@@ -138,7 +144,8 @@ body {
 /* ── Toast ── */
 .toast {
     position: fixed;
-    bottom: 24px; right: 24px;
+    bottom: max(24px, calc(16px + env(safe-area-inset-bottom)));
+    right: max(24px, env(safe-area-inset-right));
     z-index: 100000;
     padding: 12px 20px;
     border-radius: var(--radius-sm);
@@ -188,7 +195,7 @@ body {
 .bills-view-tabs { display: flex; gap: 4px; flex: 1; }
 .bills-view-tab { padding: 8px 20px; font-size: 14px; font-weight: 500; background: none; border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; color: var(--text-muted); font-family: inherit; transition: color 0.15s, background 0.15s, border-color 0.15s; }
 .bills-view-tab:hover { color: var(--text-primary); background: var(--border-light); }
-.bills-view-tab.active { background: var(--accent); color: #faf7f2; border-color: var(--accent); font-weight: 600; }
+.bills-view-tab.active { background: var(--border-light); color: var(--text-primary); border-color: var(--border); font-weight: 600; border-bottom: 2px solid var(--accent); }
 
 .bills-month-nav { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 
@@ -204,16 +211,16 @@ body {
 .bills-month-calendar { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
 .bills-month-cell { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; height: 52px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 500; cursor: pointer; user-select: none; transition: opacity 0.12s, box-shadow 0.12s; border: 2px solid transparent; }
 .bills-month-check { font-size: 11px; font-weight: 700; line-height: 1; opacity: 0.85; }
-.bills-month-cell.has-bills  { background: #c8f0cb; color: #1a5c23; }
-.bills-month-cell.has-bills:hover { background: #b0e8b4; }
-.bills-month-cell.no-bills   { background: #fde0e2; color: #8a3a3a; }
-.bills-month-cell.no-bills:hover { background: #f8c8cb; }
+.bills-month-cell.has-bills  { background: #e8eeea; color: var(--text-secondary); }
+.bills-month-cell.has-bills:hover { background: #dde5df; }
+.bills-month-cell.no-bills   { background: var(--border-light); color: var(--text-muted); }
+.bills-month-cell.no-bills:hover { background: var(--border); }
 .bills-month-cell.active { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(90,122,94,0.25); font-weight: 700; }
 .bills-month-cell.in-comparison { background: rgba(90,122,94,0.15); border-color: var(--accent); color: var(--accent); font-weight: 600; }
 .bills-month-cell.comp-at-cap { opacity: 0.4; cursor: not-allowed; }
 
 .bills-comparison-btn { font-size: 12px; width: 100%; justify-content: center; }
-.bills-comparison-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.bills-comparison-btn.active { background: var(--border-light); color: var(--text-primary); border-color: var(--text-muted); }
 .bills-comparison-charts { display: flex; flex-direction: column; gap: 12px; margin-top: 4px; }
 .bills-chart-card { margin-top: 10px; padding: 10px; }
 .bills-chart-card h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-muted); margin-bottom: 8px; }
@@ -248,8 +255,8 @@ body {
 .bills-settled-label input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-color: var(--accent); }
 .bills-settled-label span { flex: 1; }
 
-.bills-balance-positive { color: var(--income); font-weight: 600; }
-.bills-balance-negative { color: var(--danger); font-weight: 600; }
+.bills-balance-positive { color: var(--income); }
+.bills-balance-negative { color: var(--danger); }
 
 .bills-transfers-section { margin-top: 16px; padding-top: 16px; border-top: 2px solid var(--border); }
 .bills-transfers-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); font-weight: 500; margin-bottom: 10px; }
@@ -277,18 +284,64 @@ body {
 /* Income summary in calendar panel */
 .bills-income-block { margin: 12px 0 4px; padding: 10px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 13px; }
 .bills-income-block-title { font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); margin-bottom: 8px; }
-.bills-income-row { display: flex; justify-content: space-between; align-items: center; padding: 3px 0; gap: 8px; }
-.bills-income-name { font-weight: 500; }
-.bills-income-figures { display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 12px; }
-.bills-income-share-badge { background: var(--accent); color: #faf7f2; border-radius: 4px; padding: 1px 5px; font-size: 11px; font-weight: 600; }
+.bills-income-row { display: flex; align-items: center; padding: 4px 0; gap: 8px; }
+.bills-income-name { flex: 1; font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bills-income-input-wrap { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.bills-income-input { width: 84px; padding: 3px 6px; border: 1px solid var(--border); border-radius: var(--radius-xs); font-size: 13px; font-family: inherit; background: var(--surface); color: var(--text-primary); text-align: right; }
+.bills-income-input:focus { outline: none; border-color: var(--accent); }
+.bills-income-unit { font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
+.bills-income-share-badge { background: var(--border-light); color: var(--text-secondary); border-radius: 4px; padding: 1px 5px; font-size: 11px; font-weight: 500; min-width: 30px; text-align: center; flex-shrink: 0; }
 .bills-income-block-total { display: flex; justify-content: space-between; border-top: 1px solid var(--border); margin-top: 6px; padding-top: 6px; font-weight: 600; font-size: 12px; }
+
+/* Mobile participants block (hidden on desktop, shown on mobile) */
+.bills-mobile-participants { display: none; }
+.tab-label-mobile { display: none; }
+
+.bills-panel-divider { border-top: 1px solid var(--border); margin: 12px 0; }
+
+@keyframes modalSlideUp {
+    from { transform: translateY(60px); opacity: 0; }
+    to   { transform: translateY(0);    opacity: 1; }
+}
 
 /* Responsive */
 @media (max-width: 750px) {
     .bills-panels { flex-direction: column; }
     .bills-month-calendar { grid-template-columns: repeat(6, 1fr); }
+
+    /* Exclusive tab panels: JS adds .mobile-active to show one at a time */
+    .bills-view { display: none; }
+    .bills-view.mobile-active { display: flex; }
+
+    /* Swap participant section: show in calendar panel, hide in settlement */
+    .bills-desktop-participants { display: none; }
+    .bills-mobile-participants  { display: block; }
+
+    /* Swap tab label */
+    .tab-label-desktop { display: none; }
+    .tab-label-mobile  { display: inline; }
 }
+
 @media (max-width: 480px) {
+    #main-content {
+        padding-bottom: max(48px, calc(24px + env(safe-area-inset-bottom)));
+    }
+
+    /* Tab row wraps: tabs take full width, month nav centres below */
+    .bills-view-tabs { flex: 0 0 100%; }
+    .bills-view-tab  { flex: 1; justify-content: center; padding: 7px 12px; font-size: 13px; }
+    .bills-month-nav { margin-left: 0; flex: 1; justify-content: center; }
+
     .bills-month-calendar { grid-template-columns: repeat(4, 1fr); }
-    .bills-view-tab { padding: 7px 12px; font-size: 13px; }
+
+    /* Modals slide up from bottom like native sheets */
+    .modal { align-items: flex-end; }
+    .modal-content {
+        width: 100%;
+        max-width: 100%;
+        border-bottom-left-radius: 0;
+        border-bottom-right-radius: 0;
+        padding-bottom: max(28px, calc(16px + env(safe-area-inset-bottom)));
+        animation: modalSlideUp 0.25s ease-out;
+    }
 }
