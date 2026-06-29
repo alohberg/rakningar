@@ -281,6 +281,30 @@ body {
 .bills-total-summary { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; font-size: 13px; color: var(--text-muted); }
 .bills-total-summary strong { color: var(--text-primary); }
 
+/* Settled state – turn settlement panel text green */
+#bills-view-settlement.is-settled .bills-partner-block {
+    border-color: var(--income);
+    background: color-mix(in srgb, var(--income) 6%, var(--bg));
+}
+#bills-view-settlement.is-settled .bills-partner-block-name,
+#bills-view-settlement.is-settled .bills-balance-negative,
+#bills-view-settlement.is-settled .bills-balance-positive,
+#bills-view-settlement.is-settled .breakdown-value,
+#bills-view-settlement.is-settled .bills-partner-breakdown li.breakdown-total,
+#bills-view-settlement.is-settled .bills-transfers-title,
+#bills-view-settlement.is-settled .bills-transfer-amount,
+#bills-view-settlement.is-settled .bills-total-summary,
+#bills-view-settlement.is-settled .bills-total-summary strong,
+#bills-view-settlement.is-settled .bills-settled-label span {
+    color: var(--income);
+}
+#bills-view-settlement.is-settled .bills-transfers-section {
+    border-top-color: var(--income);
+}
+#bills-view-settlement.is-settled .bills-transfer-row {
+    background: color-mix(in srgb, var(--income) 8%, var(--bg));
+}
+
 /* Income summary in calendar panel */
 .bills-income-block { margin: 12px 0 4px; padding: 10px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 13px; }
 .bills-income-block-title { font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); margin-bottom: 8px; }
