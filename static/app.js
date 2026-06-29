@@ -812,6 +812,17 @@ function destroyBillsCharts() {
     billsState.comparisonCharts = {};
 }
 
+function _getIncomeForMonths(monthKeys) {
+    return monthKeys.map(key => {
+        const [y, m] = key.split('-').map(Number);
+        const incomes = {};
+        billsState.partners.forEach(p => {
+            incomes[p.name] = _readLocalIncome(y, m, p.id);
+        });
+        return { key, year: y, month: m, incomes };
+    });
+}
+
 function _compMonthKey(m) { return `${m.year}-${m.month}`; }
 
 function _renderComparisonMonthChips(data) {
@@ -863,28 +874,67 @@ function _zeroMonth(year, month, partners) {
 
 function _renderComparisonChartData() {
     const data = billsState.comparisonData;
-    if (!data || !data.months || data.months.length === 0) {
-        const section = document.getElementById('bills-comparison-section');
-        if (section) {
-            const chartsDiv = section.querySelector('.bills-comparison-charts');
-            if (chartsDiv) chartsDiv.innerHTML = '<p style="color:var(--text-muted);font-size:12px;padding:8px 0">Inga data att jämföra ännu.</p>';
+    const partners = billsState.partners;
+    if (partners.length === 0) return;
+
+    const sortedKeys = Array.from(billsState.selectedComparisonMonths).sort((a, b) => {
+        const [ay, am] = a.split('-').map(Number);
+        const [by, bm] = b.split('-').map(Number);
+        return ay !== by ? ay - by : am - bm;
+    });
+
+    const labels = sortedKeys.map(key => {
+        const [y, mo] = key.split('-').map(Number);
+        return `${MONTH_NAMES_SV[mo - 1].substring(0,3)} ${y}`;
+    });
+
+    const PARTNER_COLORS = [
+        ['rgba(90,122,94,0.85)',  'rgba(60,95,65,1)'],
+        ['rgba(90,130,180,0.85)', 'rgba(60,100,160,1)'],
+        ['rgba(180,110,80,0.85)', 'rgba(150,80,55,1)'],
+        ['rgba(160,90,160,0.85)', 'rgba(130,60,130,1)'],
+    ];
+
+    // Income chart — always shown when partners exist
+    const incomeMonths = _getIncomeForMonths(sortedKeys);
+    const hasAnyIncome = incomeMonths.some(m => Object.values(m.incomes).some(v => v > 0));
+    const ctxIncome = document.getElementById('bills-income-chart');
+    const incomeCard = ctxIncome && ctxIncome.closest('.bills-chart-card');
+    if (ctxIncome) {
+        if (hasAnyIncome) {
+            if (incomeCard) incomeCard.style.display = '';
+            const incomeDatasets = partners.map((p, i) => {
+                const [bg, border] = PARTNER_COLORS[i % PARTNER_COLORS.length];
+                return {
+                    label: p.name,
+                    data: incomeMonths.map(m => m.incomes[p.name] || 0),
+                    backgroundColor: bg, borderColor: border, borderWidth: 1, borderRadius: 4,
+                };
+            });
+            billsState.comparisonCharts.income = new Chart(ctxIncome, {
+                type: 'bar',
+                data: { labels, datasets: incomeDatasets },
+                options: {
+                    responsive: true, maintainAspectRatio: true,
+                    scales: { y: { beginAtZero: true, ticks: { callback: v => v + ' kr', font: { size: 10 } } } },
+                    plugins: { legend: { position: 'top', labels: { font: { size: 10 } } } },
+                },
+            });
+        } else {
+            if (incomeCard) incomeCard.style.display = 'none';
         }
-        return;
     }
+
+    // Bill charts — only shown when there are bills
+    const hasBills = data && data.months && data.months.length > 0;
     const monthMap = {};
-    data.months.forEach(m => { monthMap[_compMonthKey(m)] = m; });
-    const filtered = Array.from(billsState.selectedComparisonMonths)
-        .sort((a, b) => {
-            const [ay, am] = a.split('-').map(Number);
-            const [by, bm] = b.split('-').map(Number);
-            return ay !== by ? ay - by : am - bm;
-        })
-        .map(key => {
-            if (monthMap[key]) return monthMap[key];
-            const [y, mo] = key.split('-').map(Number);
-            return _zeroMonth(y, mo, data.partners);
-        });
-    const labels             = filtered.map(m => `${MONTH_NAMES_SV[m.month - 1].substring(0,3)} ${m.year}`);
+    if (hasBills) data.months.forEach(m => { monthMap[_compMonthKey(m)] = m; });
+    const filtered = sortedKeys.map(key => {
+        if (monthMap[key]) return monthMap[key];
+        const [y, mo] = key.split('-').map(Number);
+        return _zeroMonth(y, mo, data ? data.partners : []);
+    });
+
     const STACK_GREEN        = 'rgba(76,175,80,0.82)';
     const STACK_GREEN_BORDER = 'rgba(56,142,60,1)';
     const STACK_YELLOW        = 'rgba(255,193,7,0.88)';
@@ -893,44 +943,58 @@ function _renderComparisonChartData() {
         x: { stacked: true },
         y: { stacked: true, beginAtZero: true, ticks: { callback: v => v + ' kr', font: { size: 10 } } },
     };
+
     const ctxTotal = document.getElementById('bills-total-chart');
+    const totalCard = ctxTotal && ctxTotal.closest('.bills-chart-card');
     if (ctxTotal) {
-        const PERSONAL_COLORS = [
-            ['rgba(255,193,7,0.88)',  'rgba(245,168,0,1)'],
-            ['rgba(255,152,0,0.88)',  'rgba(230,120,0,1)'],
-            ['rgba(255,235,59,0.88)', 'rgba(220,200,0,1)'],
-            ['rgba(255,111,0,0.88)',  'rgba(230,80,0,1)'],
-        ];
-        const totalDatasets = [
-            { label: 'Delade kostnader', data: filtered.map(m => m.total_split),
-              backgroundColor: STACK_GREEN, borderColor: STACK_GREEN_BORDER, borderWidth: 1, borderSkipped: false, stack: 'total' },
-            ...data.partners.map((name, i) => {
-                const [bg, border] = PERSONAL_COLORS[i % PERSONAL_COLORS.length];
-                return { label: `${name} – Personliga`, data: filtered.map(m => m.per_partner_personal[name] || 0),
-                         backgroundColor: bg, borderColor: border, borderWidth: 1, borderSkipped: false, stack: 'total' };
-            }),
-        ];
-        billsState.comparisonCharts.total = new Chart(ctxTotal, {
-            type: 'bar',
-            data: { labels, datasets: totalDatasets },
-            options: { responsive: true, maintainAspectRatio: true, scales: stackedScales,
-                       plugins: { legend: { position: 'top', labels: { font: { size: 10 } } } } },
-        });
+        if (hasBills) {
+            if (totalCard) totalCard.style.display = '';
+            const PERSONAL_COLORS = [
+                ['rgba(255,193,7,0.88)',  'rgba(245,168,0,1)'],
+                ['rgba(255,152,0,0.88)',  'rgba(230,120,0,1)'],
+                ['rgba(255,235,59,0.88)', 'rgba(220,200,0,1)'],
+                ['rgba(255,111,0,0.88)',  'rgba(230,80,0,1)'],
+            ];
+            const totalDatasets = [
+                { label: 'Delade kostnader', data: filtered.map(m => m.total_split),
+                  backgroundColor: STACK_GREEN, borderColor: STACK_GREEN_BORDER, borderWidth: 1, borderSkipped: false, stack: 'total' },
+                ...(data.partners || []).map((name, i) => {
+                    const [bg, border] = PERSONAL_COLORS[i % PERSONAL_COLORS.length];
+                    return { label: `${name} – Personliga`, data: filtered.map(m => m.per_partner_personal[name] || 0),
+                             backgroundColor: bg, borderColor: border, borderWidth: 1, borderSkipped: false, stack: 'total' };
+                }),
+            ];
+            billsState.comparisonCharts.total = new Chart(ctxTotal, {
+                type: 'bar',
+                data: { labels, datasets: totalDatasets },
+                options: { responsive: true, maintainAspectRatio: true, scales: stackedScales,
+                           plugins: { legend: { position: 'top', labels: { font: { size: 10 } } } } },
+            });
+        } else {
+            if (totalCard) totalCard.style.display = 'none';
+        }
     }
+
     const ctxPP = document.getElementById('bills-per-person-chart');
-    if (ctxPP && data.partners.length > 0) {
-        const ppDatasets = [];
-        data.partners.forEach(name => {
-            ppDatasets.push({ label: `${name} – Delade`, data: filtered.map(m => m.per_partner_shared[name] || 0),
-                              backgroundColor: STACK_GREEN, borderColor: STACK_GREEN_BORDER, borderWidth: 1, borderSkipped: false, stack: name });
-            ppDatasets.push({ label: `${name} – Personliga`, data: filtered.map(m => m.per_partner_personal[name] || 0),
-                              backgroundColor: STACK_YELLOW, borderColor: STACK_YELLOW_BORDER, borderWidth: 1, borderSkipped: false, stack: name });
-        });
-        billsState.comparisonCharts.perPerson = new Chart(ctxPP, {
-            type: 'bar',
-            data: { labels, datasets: ppDatasets },
-            options: { responsive: true, maintainAspectRatio: true, scales: stackedScales,
-                       plugins: { legend: { position: 'top', labels: { font: { size: 10 } } } } },
-        });
+    const ppCard = ctxPP && ctxPP.closest('.bills-chart-card');
+    if (ctxPP) {
+        if (hasBills && partners.length > 0) {
+            if (ppCard) ppCard.style.display = '';
+            const ppDatasets = [];
+            (data.partners || []).forEach(name => {
+                ppDatasets.push({ label: `${name} – Delade`, data: filtered.map(m => m.per_partner_shared[name] || 0),
+                                  backgroundColor: STACK_GREEN, borderColor: STACK_GREEN_BORDER, borderWidth: 1, borderSkipped: false, stack: name });
+                ppDatasets.push({ label: `${name} – Personliga`, data: filtered.map(m => m.per_partner_personal[name] || 0),
+                                  backgroundColor: STACK_YELLOW, borderColor: STACK_YELLOW_BORDER, borderWidth: 1, borderSkipped: false, stack: name });
+            });
+            billsState.comparisonCharts.perPerson = new Chart(ctxPP, {
+                type: 'bar',
+                data: { labels, datasets: ppDatasets },
+                options: { responsive: true, maintainAspectRatio: true, scales: stackedScales,
+                           plugins: { legend: { position: 'top', labels: { font: { size: 10 } } } } },
+            });
+        } else {
+            if (ppCard) ppCard.style.display = 'none';
+        }
     }
 }
