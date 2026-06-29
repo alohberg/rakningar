@@ -461,7 +461,6 @@ function billsJumpToMonth(year, month) {
             billsState.selectedComparisonMonths.add(key);
         }
         renderBillsMonthCalendar();
-        _renderComparisonMonthChips(billsState.comparisonData);
         destroyBillsCharts();
         _renderComparisonChartData();
         return;
@@ -490,7 +489,6 @@ function _syncComparisonToMonth() {
     if (!billsState.comparisonVisible) return;
     billsState.selectedComparisonMonths = new Set([`${billsState.year}-${billsState.month}`]);
     billsState.comparisonData = _getComparisonData();
-    _renderComparisonMonthChips(billsState.comparisonData);
     destroyBillsCharts();
     _renderComparisonChartData();
 }
@@ -786,7 +784,6 @@ function _refreshComparisonCharts() {
     if (!billsState.selectedComparisonMonths || billsState.selectedComparisonMonths.size === 0) {
         billsState.selectedComparisonMonths = new Set([currentKey]);
     }
-    _renderComparisonMonthChips(billsState.comparisonData);
     destroyBillsCharts();
     _renderComparisonChartData();
 }
@@ -833,46 +830,6 @@ function _getIncomeForMonths(monthKeys) {
 }
 
 function _compMonthKey(m) { return `${m.year}-${m.month}`; }
-
-function _renderComparisonMonthChips(data) {
-    const section = document.getElementById('bills-comparison-section');
-    if (!section) return;
-    let selector = document.getElementById('bills-comp-month-selector');
-    if (!selector) {
-        selector = document.createElement('div');
-        selector.id = 'bills-comp-month-selector';
-        selector.className = 'bills-comp-month-selector';
-        section.prepend(selector);
-    }
-    const currentKey  = `${billsState.year}-${billsState.month}`;
-    const [cy, cm]    = currentKey.split('-').map(Number);
-    const activeLabel = `${MONTH_NAMES_SV[cm - 1]} ${cy}`;
-    const extraKeys = Array.from(billsState.selectedComparisonMonths)
-        .filter(k => k !== currentKey)
-        .sort((a, b) => {
-            const [ay, am] = a.split('-').map(Number);
-            const [by, bm] = b.split('-').map(Number);
-            return ay !== by ? ay - by : am - bm;
-        });
-    const extraChips = extraKeys.map(key => {
-        const [y, mo] = key.split('-').map(Number);
-        const label   = `${MONTH_NAMES_SV[mo - 1].substring(0, 3)} ${y}`;
-        return `<span class="bills-comp-extra-chip">${label}<button class="bills-comp-remove" onclick="removeComparisonMonth('${key}')" title="Ta bort">×</button></span>`;
-    }).join('');
-    const atCap = billsState.selectedComparisonMonths.size >= 12;
-    const hint  = atCap
-        ? `<span class="bills-comp-cap-note">Max 12 månader valda</span>`
-        : `<span class="bills-comp-hint">Klicka månader i kalendern för att jämföra</span>`;
-    selector.innerHTML = `<span class="bills-comp-active-label">${activeLabel}</span>${extraChips}${hint}`;
-}
-
-function removeComparisonMonth(key) {
-    billsState.selectedComparisonMonths.delete(key);
-    renderBillsMonthCalendar();
-    _renderComparisonMonthChips(billsState.comparisonData);
-    destroyBillsCharts();
-    _renderComparisonChartData();
-}
 
 function _zeroMonth(year, month, partners) {
     const empty = {};
