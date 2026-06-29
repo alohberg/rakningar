@@ -48,6 +48,10 @@ const billsState = {
 
 const _incomeTimers = {};
 
+function _incomeKey(y, m, pid) { return `rkn_inc_${y}_${m}_${pid}`; }
+function _persistIncome(y, m, pid, v) { try { localStorage.setItem(_incomeKey(y, m, pid), String(v)); } catch(e) {} }
+function _readLocalIncome(y, m, pid) { try { const v = localStorage.getItem(_incomeKey(y, m, pid)); return v !== null ? (parseFloat(v) || 0) : 0; } catch(e) { return 0; } }
+
 // ── Boot ────────────────────────────────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -124,6 +128,13 @@ function renderBillsIncomeSummary() {
     if (!el) return;
     const partners = billsState.partners;
     if (partners.length === 0) { el.innerHTML = ''; return; }
+    // Fill state from localStorage for any partner the server didn't return data for
+    partners.forEach(p => {
+        if (!billsState.monthlyIncomes[p.id]) {
+            const local = _readLocalIncome(billsState.year, billsState.month, p.id);
+            if (local > 0) billsState.monthlyIncomes[p.id] = local;
+        }
+    });
     const totalIncome = Object.values(billsState.monthlyIncomes).reduce((s, v) => s + v, 0);
     const monthLabel  = `${MONTH_NAMES_SV[billsState.month - 1]} ${billsState.year}`;
     const rows = partners.map(p => {
@@ -153,12 +164,15 @@ function renderBillsIncomeSummary() {
 }
 
 function onBillIncomeInput(partnerId, value) {
-    billsState.monthlyIncomes[partnerId] = parseFloat(value) || 0;
+    const income = parseFloat(value) || 0;
+    billsState.monthlyIncomes[partnerId] = income;
+    _persistIncome(billsState.year, billsState.month, partnerId, income);
     _updateIncomeShareBadges();
     clearTimeout(_incomeTimers[partnerId]);
+    const [sy, sm] = [billsState.year, billsState.month];
     _incomeTimers[partnerId] = setTimeout(async () => {
-        await saveBillIncome(partnerId, billsState.monthlyIncomes[partnerId]);
-        await renderBillsSettlement();
+        await saveBillIncome(partnerId, income, sy, sm);
+        if (billsState.year === sy && billsState.month === sm) await renderBillsSettlement();
     }, 700);
 }
 
@@ -174,11 +188,11 @@ function _updateIncomeShareBadges() {
     if (totalEl) totalEl.textContent = total > 0 ? formatCurrency(total) + '/mån' : '—';
 }
 
-async function saveBillIncome(partnerId, income) {
+async function saveBillIncome(partnerId, income, year = billsState.year, month = billsState.month) {
     await fetch('/api/bill-incomes', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ partner_id: partnerId, year: billsState.year, month: billsState.month, income }),
+        body: JSON.stringify({ partner_id: partnerId, year, month, income }),
     });
 }
 
