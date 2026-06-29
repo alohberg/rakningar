@@ -226,7 +226,7 @@ body {
 .bills-analysis-tab:hover:not(:disabled) { color: var(--text-primary); background: var(--border-light); }
 .bills-analysis-tab.active { background: var(--border-light); color: var(--text-primary); border-color: var(--border); font-weight: 600; border-bottom: 2px solid var(--accent); }
 .bills-analysis-tab:disabled, .bills-analysis-tab.disabled { opacity: 0.35; cursor: not-allowed; }
-.bills-comparison-charts { margin-top: 10px; }
+.bills-comparison-charts { margin-top: 10px; height: 220px; position: relative; }
 .bills-chart-card { margin-top: 10px; padding: 10px; }
 .bills-chart-card h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-muted); margin-bottom: 8px; }
 

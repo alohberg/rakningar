@@ -799,7 +799,7 @@ function toggleBillsComparison() {
     if (billsState.comparisonVisible) {
         section.classList.remove('hidden');
         if (btn) btn.classList.add('active');
-        _refreshComparisonCharts();
+        requestAnimationFrame(() => _refreshComparisonCharts());
     } else {
         section.classList.add('hidden');
         if (btn) btn.classList.remove('active');
@@ -980,7 +980,7 @@ function _renderComparisonChartData() {
     billsState.comparisonCharts.main = new Chart(ctx, {
         type: 'bar',
         data: { labels, datasets },
-        options: { responsive: true, maintainAspectRatio: true, scales,
+        options: { responsive: true, maintainAspectRatio: false, scales,
                    plugins: { legend: { position: 'top', labels: { font: { size: 10 } } } } },
     });
 }
