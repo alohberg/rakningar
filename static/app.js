@@ -47,6 +47,7 @@ const billsState = {
 };
 
 const _incomeTimers = {};
+let _settlementRenderGen = 0;
 
 function _incomeKey(y, m, pid) { return `rkn_inc_${y}_${m}_${pid}`; }
 function _persistIncome(y, m, pid, v) { try { localStorage.setItem(_incomeKey(y, m, pid), String(v)); } catch(e) {} }
@@ -245,19 +246,36 @@ function renderBillsTable() {
 }
 
 async function renderBillsSettlement() {
+    const gen = ++_settlementRenderGen;
     const body = document.getElementById('bills-settlement-body');
     if (!body) return;
     if (billsState.partners.length < 2) {
+        if (gen !== _settlementRenderGen) return;
         body.innerHTML = '<p class="bills-settlement-empty">Lägg till minst två deltagare för att beräkna uppgörelsen.</p>';
         return;
     }
     const splitBills = billsState.bills.filter(b => b.is_split);
     if (splitBills.length === 0) {
+        if (gen !== _settlementRenderGen) return;
         body.innerHTML = '<p class="bills-settlement-empty">Inga delade räkningar den här månaden.</p>';
         return;
     }
-    const res  = await fetch(`/api/bills/summary?year=${billsState.year}&month=${billsState.month}`);
+    // Seed incomes from localStorage before the server call so Vercel's ephemeral
+    // DB doesn't silently fall back to the default 50/50 split.
+    const [sy, sm] = [billsState.year, billsState.month];
+    billsState.partners.forEach(p => {
+        if (!billsState.monthlyIncomes[p.id]) {
+            const local = _readLocalIncome(sy, sm, p.id);
+            if (local > 0) billsState.monthlyIncomes[p.id] = local;
+        }
+    });
+    const incomeParam = billsState.partners
+        .map(p => `inc_${p.id}=${billsState.monthlyIncomes[p.id] || 0}`)
+        .join('&');
+    const res  = await fetch(`/api/bills/summary?year=${sy}&month=${sm}&${incomeParam}`);
+    if (gen !== _settlementRenderGen) return;
     const data = await res.json();
+    if (gen !== _settlementRenderGen) return;
     const settledKey = `${billsState.year}-${billsState.month}`;
     const settled    = billsState.settledMonths.has(settledKey);
     const partnerBlocks = data.partners.map(p => {

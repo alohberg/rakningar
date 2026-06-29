@@ -360,6 +360,17 @@ def get_bills_summary():
         if not b['is_split']:
             personal[b['paid_by']] += b['amount']
     monthly_incomes = {r['partner_id']: r['income'] for r in monthly_income_rows}
+    # Client may pass inc_<pid>=<value> to supply localStorage-cached incomes when
+    # the DB is empty (Vercel ephemeral SQLite resets between cold starts).
+    for key, val in request.args.items():
+        if key.startswith('inc_'):
+            try:
+                pid = int(key[4:])
+                client_val = float(val)
+                if client_val > 0:
+                    monthly_incomes[pid] = client_val
+            except (ValueError, TypeError):
+                pass
     if monthly_incomes:
         total_income = sum(monthly_incomes.get(p['id'], 0) for p in partners)
         if total_income > 0:
