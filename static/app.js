@@ -1,4 +1,4 @@
-// ── Utilities ─────────────────────────────────────────────────────────────────────────────────────────────────
+// ── Utilities ──────────────────────────────────────────────────────────────────────────────────────
 
 function showToast(message, type = 'info') {
     const toast = document.createElement('div');
@@ -24,12 +24,17 @@ function escHtml(str) {
         .replace(/"/g, '&quot;');
 }
 
-// ── State ───────────────────────────────────────────────────────────────────────────────────────────
+// ── State ──────────────────────────────────────────────────────────────────────────────────────────
 
 const MONTH_NAMES_SV = [
     'Januari','Februari','Mars','April','Maj','Juni',
     'Juli','Augusti','September','Oktober','November','December'
 ];
+
+const householdsState = {
+    list:     [],   // [{id, name}]
+    activeId: null,
+};
 
 const billsState = {
     year:              new Date().getFullYear(),
@@ -48,23 +53,78 @@ const billsState = {
     analysisView:      'income',
 };
 
-// ── Persistence ──────────────────────────────────────────────────────────────────────────────────────
+function _hid() { return householdsState.activeId; }
+
+// ── Households persistence ──────────────────────────────────────────────────────────────────────
+
+function _loadHouseholds() {
+    try {
+        const h = localStorage.getItem('rkn_households');
+        if (h) householdsState.list = JSON.parse(h);
+    } catch(e) {}
+}
+
+function _saveHouseholds() {
+    try {
+        localStorage.setItem('rkn_households', JSON.stringify(householdsState.list));
+    } catch(e) {}
+}
+
+// Migrate old single-household data to per-household format
+function _migrateOldData() {
+    if (localStorage.getItem('rkn_households')) return;
+    const oldPartners = localStorage.getItem('rkn_partners');
+    if (!oldPartners) return;
+
+    const hid = 1;
+    localStorage.setItem('rkn_households', JSON.stringify([{ id: hid, name: 'Mitt hushåll' }]));
+    localStorage.setItem(`rkn_partners_${hid}`, oldPartners);
+
+    const oldBills = localStorage.getItem('rkn_all_bills');
+    if (oldBills) localStorage.setItem(`rkn_bills_${hid}`, oldBills);
+
+    const oldSettled = localStorage.getItem('rkn_settled');
+    if (oldSettled) localStorage.setItem(`rkn_settled_${hid}`, oldSettled);
+
+    // Migrate income keys: rkn_inc_Y_M_PID → rkn_inc_1_Y_M_PID
+    const incKeys = [];
+    for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('rkn_inc_')) incKeys.push(key);
+    }
+    incKeys.forEach(key => {
+        const suffix = key.slice(8);
+        const parts = suffix.split('_');
+        if (parts.length === 3 && parts.every(p => /^\d+$/.test(p))) {
+            localStorage.setItem(`rkn_inc_${hid}_${suffix}`, localStorage.getItem(key));
+        }
+    });
+}
+
+// ── Bills persistence (per-household) ──────────────────────────────────────────────────────────
 
 function _saveState() {
+    const hid = _hid();
+    if (!hid) return;
     try {
-        localStorage.setItem('rkn_partners', JSON.stringify(billsState.partners));
-        localStorage.setItem('rkn_all_bills', JSON.stringify(billsState.allBills));
-        localStorage.setItem('rkn_settled', JSON.stringify([...billsState.settledMonths]));
+        localStorage.setItem(`rkn_partners_${hid}`, JSON.stringify(billsState.partners));
+        localStorage.setItem(`rkn_bills_${hid}`, JSON.stringify(billsState.allBills));
+        localStorage.setItem(`rkn_settled_${hid}`, JSON.stringify([...billsState.settledMonths]));
     } catch(e) {}
 }
 
 function _loadState() {
+    const hid = _hid();
+    billsState.partners     = [];
+    billsState.allBills     = [];
+    billsState.settledMonths = new Set();
+    if (!hid) return;
     try {
-        const p = localStorage.getItem('rkn_partners');
-        const b = localStorage.getItem('rkn_all_bills');
-        const s = localStorage.getItem('rkn_settled');
-        if (p) billsState.partners = JSON.parse(p);
-        if (b) billsState.allBills = JSON.parse(b);
+        const p = localStorage.getItem(`rkn_partners_${hid}`);
+        const b = localStorage.getItem(`rkn_bills_${hid}`);
+        const s = localStorage.getItem(`rkn_settled_${hid}`);
+        if (p) billsState.partners  = JSON.parse(p);
+        if (b) billsState.allBills  = JSON.parse(b);
         if (s) billsState.settledMonths = new Set(JSON.parse(s));
     } catch(e) {}
 }
@@ -73,7 +133,7 @@ function _nextId(arr) {
     return arr.length === 0 ? 1 : Math.max(...arr.map(x => x.id)) + 1;
 }
 
-function _incomeKey(y, m, pid) { return `rkn_inc_${y}_${m}_${pid}`; }
+function _incomeKey(y, m, pid) { return `rkn_inc_${_hid()}_${y}_${m}_${pid}`; }
 function _persistIncome(y, m, pid, v) { try { localStorage.setItem(_incomeKey(y, m, pid), String(v)); } catch(e) {} }
 function _readLocalIncome(y, m, pid) {
     try {
@@ -82,13 +142,183 @@ function _readLocalIncome(y, m, pid) {
     } catch(e) { return 0; }
 }
 
-// ── Boot ────────────────────────────────────────────────────────────────────────────────────────
+// ── Boot ──────────────────────────────────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
+    _migrateOldData();
+    _loadHouseholds();
+    showHouseholdsPage();
+});
+
+// ── Households page ───────────────────────────────────────────────────────────────────────────────
+
+function showHouseholdsPage() {
+    document.getElementById('households-page').classList.add('active');
+    document.getElementById('bills-page').classList.remove('active');
+    householdsState.activeId = null;
+    renderHouseholdsPage();
+}
+
+function goBackToHouseholds() {
+    destroyBillsCharts();
+    if (billsState.comparisonVisible) {
+        billsState.comparisonVisible = false;
+        const section = document.getElementById('bills-comparison-section');
+        if (section) section.classList.add('hidden');
+        const btn = document.getElementById('bills-comparison-btn');
+        if (btn) btn.classList.remove('active');
+        billsState.selectedComparisonMonths = new Set();
+    }
+    document.getElementById('bills-page').classList.remove('active');
+    document.getElementById('households-page').classList.add('active');
+    householdsState.activeId = null;
+    renderHouseholdsPage();
+}
+
+function openHousehold(id) {
+    householdsState.activeId = id;
+
+    // Reset bills view state
+    billsState.comparisonVisible = false;
+    billsState.comparisonCharts  = {};
+    billsState.comparisonData    = null;
+    billsState.selectedComparisonMonths = new Set();
+    billsState.analysisView = 'income';
+    destroyBillsCharts();
+    const section = document.getElementById('bills-comparison-section');
+    if (section) section.classList.add('hidden');
+    const compBtn = document.getElementById('bills-comparison-btn');
+    if (compBtn) compBtn.classList.remove('active');
+
+    const h = householdsState.list.find(x => x.id === id);
+    const nameEl = document.getElementById('bills-household-name');
+    if (nameEl) nameEl.textContent = h ? h.name : 'Räkningar';
+
+    document.getElementById('households-page').classList.remove('active');
+    document.getElementById('bills-page').classList.add('active');
+
     _loadState();
     _refreshForMonth();
     initMobilePanels();
-});
+}
+
+function _getHouseholdSummary(hid) {
+    try {
+        const bills    = JSON.parse(localStorage.getItem(`rkn_bills_${hid}`)    || '[]');
+        const settled  = new Set(JSON.parse(localStorage.getItem(`rkn_settled_${hid}`) || '[]'));
+        const partners = JSON.parse(localStorage.getItem(`rkn_partners_${hid}`) || '[]');
+        const now = new Date();
+        const y = now.getFullYear(), m = now.getMonth() + 1;
+        const monthBills = bills.filter(b => b.year === y && b.month === m);
+        const monthTotal = monthBills.reduce((s, b) => s + b.amount, 0);
+        return { partners, monthTotal, isSettled: settled.has(`${y}-${m}`) };
+    } catch(e) { return { partners: [], monthTotal: 0, isSettled: false }; }
+}
+
+function renderHouseholdsPage() {
+    const grid = document.getElementById('households-grid');
+    if (!grid) return;
+
+    if (householdsState.list.length === 0) {
+        grid.innerHTML = `
+            <div class="households-empty">
+                <div class="households-empty-title">Välkommen!</div>
+                <div class="households-empty-sub">Skapa ditt första hushåll för att börja dela räkningar.</div>
+                <button class="btn btn-primary" onclick="openCreateHouseholdModal()">+ Nytt hushåll</button>
+            </div>`;
+        return;
+    }
+
+    const now = new Date();
+    const monthLabel = `${MONTH_NAMES_SV[now.getMonth()]} ${now.getFullYear()}`;
+
+    grid.innerHTML = householdsState.list.map(h => {
+        const { partners, monthTotal, isSettled } = _getHouseholdSummary(h.id);
+        const participantChips = partners.length > 0
+            ? partners.map(p => `<span class="household-card-participant">${escHtml(p.name)}</span>`).join('')
+            : '<span style="font-size:12px;color:var(--text-muted);font-style:italic">Inga deltagare</span>';
+        const settledBadge = isSettled ? '<span class="household-card-settled">✓ Uppgjord</span>' : '';
+        return `
+        <div class="household-card" onclick="openHousehold(${h.id})">
+            <div class="household-card-name">${escHtml(h.name)}</div>
+            <div class="household-card-participants">${participantChips}</div>
+            <div class="household-card-footer">
+                <div class="household-card-stat">
+                    <strong>${monthTotal > 0 ? formatCurrency(monthTotal) : '—'}</strong>
+                    ${monthLabel}
+                </div>
+                ${settledBadge}
+            </div>
+        </div>`;
+    }).join('');
+}
+
+// ── Create household ─────────────────────────────────────────────────────────────────────────────
+
+let _newHouseholdParticipants = [];
+
+function openCreateHouseholdModal() {
+    _newHouseholdParticipants = [];
+    document.getElementById('household-name-input').value = '';
+    document.getElementById('household-participant-input').value = '';
+    document.getElementById('household-participants-chips').innerHTML = '';
+    document.getElementById('create-household-modal').classList.remove('hidden');
+    setTimeout(() => document.getElementById('household-name-input').focus(), 50);
+}
+
+function closeCreateHouseholdModal() {
+    document.getElementById('create-household-modal').classList.add('hidden');
+}
+
+function addHouseholdParticipant() {
+    const input = document.getElementById('household-participant-input');
+    const name  = (input.value || '').trim();
+    if (!name) return;
+    if (_newHouseholdParticipants.some(p => p.name.toLowerCase() === name.toLowerCase())) {
+        showToast('Deltagare finns redan', 'error');
+        return;
+    }
+    const id = _newHouseholdParticipants.length === 0 ? 1
+        : Math.max(..._newHouseholdParticipants.map(p => p.id)) + 1;
+    _newHouseholdParticipants.push({ id, name });
+    input.value = '';
+    input.focus();
+    _renderNewHouseholdParticipants();
+}
+
+function removeNewHouseholdParticipant(idx) {
+    _newHouseholdParticipants.splice(idx, 1);
+    _renderNewHouseholdParticipants();
+}
+
+function _renderNewHouseholdParticipants() {
+    const el = document.getElementById('household-participants-chips');
+    if (!el) return;
+    el.innerHTML = _newHouseholdParticipants.map((p, i) => `
+        <span class="bills-partner-chip">
+            <span>${escHtml(p.name)}</span>
+            <button class="bills-partner-delete" onclick="removeNewHouseholdParticipant(${i})" title="Ta bort">×</button>
+        </span>`).join('');
+}
+
+function createHousehold() {
+    const name = (document.getElementById('household-name-input').value || '').trim();
+    if (!name) { showToast('Ange ett namn för hushållet', 'error'); return; }
+
+    const newId = householdsState.list.length === 0 ? 1
+        : Math.max(...householdsState.list.map(h => h.id)) + 1;
+    householdsState.list.push({ id: newId, name });
+    _saveHouseholds();
+
+    if (_newHouseholdParticipants.length > 0) {
+        try {
+            localStorage.setItem(`rkn_partners_${newId}`, JSON.stringify(_newHouseholdParticipants));
+        } catch(e) {}
+    }
+
+    closeCreateHouseholdModal();
+    openHousehold(newId);
+}
 
 // ── Refresh for current month ──────────────────────────────────────────────────────────────────────
 
@@ -97,7 +327,7 @@ function _refreshForMonth() {
         b => b.year === billsState.year && b.month === billsState.month
     );
     billsState.monthsWithBills = new Set(billsState.allBills.map(b => `${b.year}-${b.month}`));
-    billsState.monthlyIncomes = {};
+    billsState.monthlyIncomes  = {};
     billsState.partners.forEach(p => {
         const inc = _readLocalIncome(billsState.year, billsState.month, p.id);
         if (inc > 0) billsState.monthlyIncomes[p.id] = inc;
@@ -111,7 +341,7 @@ function _refreshForMonth() {
     updateBillsSettledCheckbox(false);
 }
 
-// ── Client-side settlement calculation ──────────────────────────────────────────────────────────
+// ── Client-side settlement calculation ────────────────────────────────────────────────────────────
 
 function _calculateSettlement() {
     const { partners, bills, monthlyIncomes } = billsState;
@@ -178,7 +408,7 @@ function _calculateSettlement() {
     };
 }
 
-// ── Comparison data calculation ──────────────────────────────────────────────────────────────────
+// ── Comparison data calculation ────────────────────────────────────────────────────────────────────
 
 function _getComparisonData() {
     const { allBills, partners } = billsState;
@@ -215,7 +445,7 @@ function _getComparisonData() {
     return { months, partners: partnerNames };
 }
 
-// ── Renderers ───────────────────────────────────────────────────────────────────────────────────────────────
+// ── Renderers ────────────────────────────────────────────────────────────────────────────────────
 
 function updateBillsMonthLabel() {
     const monthYear = `${MONTH_NAMES_SV[billsState.month - 1]} ${billsState.year}`;
@@ -415,7 +645,7 @@ function renderBillsSettlement() {
         </div>`;
 }
 
-// ── Month calendar ────────────────────────────────────────────────────────────────────────────────────
+// ── Month calendar ─────────────────────────────────────────────────────────────────────────────────
 
 function renderBillsMonthCalendar() {
     const cal     = document.getElementById('bills-month-calendar');
@@ -471,7 +701,7 @@ function billsJumpToMonth(year, month) {
     _refreshForMonth();
 }
 
-// ── Month navigation ──────────────────────────────────────────────────────────────────────────────────────────────
+// ── Month navigation ──────────────────────────────────────────────────────────────────────────────
 
 function billsChangeMonth(delta) {
     let m = billsState.month + delta;
@@ -493,7 +723,7 @@ function _syncComparisonToMonth() {
     _renderComparisonChartData();
 }
 
-// ── View toggles ────────────────────────────────────────────────────────────────────────────────────────
+// ── View toggles ─────────────────────────────────────────────────────────────────────────────────
 
 function toggleBillsView(view) {
     const isMobile = window.innerWidth <= 750;
@@ -551,7 +781,7 @@ function _adjustForKeyboard() {
     modal.style.paddingBottom = keyboardHeight > 50 ? `${keyboardHeight}px` : '';
 }
 
-// ── Settled ──────────────────────────────────────────────────────────────────────────────────────────────
+// ── Settled ──────────────────────────────────────────────────────────────────────────────────────
 
 function updateBillsSettledCheckbox(celebrate = false) {
     const cb = document.getElementById('bills-settled-checkbox');
@@ -653,7 +883,7 @@ function celebrateBillsSettled() {
     requestAnimationFrame(draw);
 }
 
-// ── Add/save bill ────────────────────────────────────────────────────────────────────────────────────
+// ── Add/save bill ────────────────────────────────────────────────────────────────────────────────
 
 function openAddBillModal() {
     if (billsState.partners.length === 0) {
@@ -717,7 +947,7 @@ function toggleBillSplit(id) {
     if (billsState.comparisonVisible) _refreshComparisonCharts();
 }
 
-// ── Partners ──────────────────────────────────────────────────────────────────────────────────────────────
+// ── Partners ─────────────────────────────────────────────────────────────────────────────────────
 
 function openAddPartnerModal() {
     document.getElementById('partner-name-input').value = '';
@@ -776,7 +1006,7 @@ function deletePartner(id) {
     showToast('Deltagare borttagen', 'success');
 }
 
-// ── Comparison charts ──────────────────────────────────────────────────────────────────────────────────
+// ── Comparison charts ─────────────────────────────────────────────────────────────────────────────
 
 function _refreshComparisonCharts() {
     billsState.comparisonData = _getComparisonData();
@@ -845,12 +1075,10 @@ function _renderComparisonChartData() {
 
     const hasBills = data && data.months && data.months.length > 0;
 
-    // Keep analysisView in sync — fall back to income if bill views aren't available
     if (!hasBills && billsState.analysisView !== 'income') {
         billsState.analysisView = 'income';
     }
 
-    // Update tab active/disabled states
     document.querySelectorAll('.bills-analysis-tab').forEach(btn => {
         const v = btn.dataset.view;
         btn.classList.toggle('active', v === billsState.analysisView);
