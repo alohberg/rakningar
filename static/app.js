@@ -215,12 +215,19 @@ function _getHouseholdSummary(hid) {
         const bills    = JSON.parse(localStorage.getItem(`rkn_bills_${hid}`)    || '[]');
         const settled  = new Set(JSON.parse(localStorage.getItem(`rkn_settled_${hid}`) || '[]'));
         const partners = JSON.parse(localStorage.getItem(`rkn_partners_${hid}`) || '[]');
-        const now = new Date();
-        const y = now.getFullYear(), m = now.getMonth() + 1;
-        const monthBills = bills.filter(b => b.year === y && b.month === m);
-        const monthTotal = monthBills.reduce((s, b) => s + b.amount, 0);
-        return { partners, monthTotal, isSettled: settled.has(`${y}-${m}`) };
-    } catch(e) { return { partners: [], monthTotal: 0, isSettled: false }; }
+        if (bills.length === 0) {
+            return { partners, monthTotal: 0, monthIncome: 0, lastMonthLabel: '', isSettled: false };
+        }
+        const sorted = [...bills].sort((a, b) => b.year !== a.year ? b.year - a.year : b.month - a.month);
+        const { year: y, month: m } = sorted[0];
+        const monthTotal = bills.filter(b => b.year === y && b.month === m).reduce((s, b) => s + b.amount, 0);
+        let monthIncome = 0;
+        partners.forEach(p => {
+            const v = localStorage.getItem(`rkn_inc_${hid}_${y}_${m}_${p.id}`);
+            if (v !== null) monthIncome += parseFloat(v) || 0;
+        });
+        return { partners, monthTotal, monthIncome, lastMonthLabel: `${MONTH_NAMES_SV[m - 1]} ${y}`, isSettled: settled.has(`${y}-${m}`) };
+    } catch(e) { return { partners: [], monthTotal: 0, monthIncome: 0, lastMonthLabel: '', isSettled: false }; }
 }
 
 function renderHouseholdsPage() {
@@ -237,15 +244,18 @@ function renderHouseholdsPage() {
         return;
     }
 
-    const now = new Date();
-    const monthLabel = `${MONTH_NAMES_SV[now.getMonth()]} ${now.getFullYear()}`;
-
     grid.innerHTML = householdsState.list.map(h => {
-        const { partners, monthTotal, isSettled } = _getHouseholdSummary(h.id);
+        const { partners, monthTotal, monthIncome, lastMonthLabel, isSettled } = _getHouseholdSummary(h.id);
         const participantChips = partners.length > 0
             ? partners.map(p => `<span class="household-card-participant">${escHtml(p.name)}</span>`).join('')
             : '<span style="font-size:12px;color:var(--text-muted);font-style:italic">Inga deltagare</span>';
         const settledBadge = isSettled ? '<span class="household-card-settled">✓ Uppgjord</span>' : '';
+        const statsHtml = lastMonthLabel
+            ? `<div class="household-card-stats">
+                <div class="household-card-stat"><strong>${monthTotal > 0 ? formatCurrency(monthTotal) : '—'}</strong>Förra mån. utgifter</div>
+                <div class="household-card-stat"><strong>${monthIncome > 0 ? formatCurrency(monthIncome) : '—'}</strong>Förra mån. inkomster</div>
+               </div>`
+            : '<div class="household-card-stat" style="font-style:italic;color:var(--text-muted)">Inga räkningar ännu</div>';
         return `
         <div class="household-card" onclick="openHousehold(${h.id})">
             <div class="household-card-header">
@@ -254,10 +264,7 @@ function renderHouseholdsPage() {
             </div>
             <div class="household-card-participants">${participantChips}</div>
             <div class="household-card-footer">
-                <div class="household-card-stat">
-                    <strong>${monthTotal > 0 ? formatCurrency(monthTotal) : '—'}</strong>
-                    ${monthLabel}
-                </div>
+                ${statsHtml}
                 ${settledBadge}
             </div>
         </div>`;
