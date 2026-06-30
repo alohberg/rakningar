@@ -332,6 +332,66 @@ body {
     to   { transform: translateY(0);    opacity: 1; }
 }
 
+/* ── Page system ── */
+.page { display: none; flex: 1; flex-direction: column; }
+.page.active { display: flex; }
+
+/* ── Bills page header inner ── */
+.page-header-inner { display: flex; align-items: center; gap: 12px; }
+.back-btn { font-size: 13px; color: var(--text-muted); }
+.back-btn:hover { color: var(--text-primary); }
+
+/* ── Households page ── */
+.households-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 16px;
+    padding: 24px;
+    align-content: start;
+    flex: 1;
+}
+
+.household-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    cursor: pointer;
+    transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.household-card:hover {
+    border-color: var(--accent);
+    box-shadow: 0 4px 20px rgba(90,122,94,0.10);
+    transform: translateY(-1px);
+}
+.household-card-name { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+.household-card-participants { display: flex; gap: 6px; flex-wrap: wrap; min-height: 22px; }
+.household-card-participant { background: var(--border-light); color: var(--text-secondary); border-radius: 20px; padding: 3px 10px; font-size: 12px; font-weight: 500; }
+.household-card-footer { display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--border); padding-top: 10px; }
+.household-card-stat { font-size: 13px; color: var(--text-muted); }
+.household-card-stat strong { color: var(--text-primary); font-weight: 600; margin-right: 4px; }
+.household-card-settled { font-size: 12px; font-weight: 600; color: var(--income); }
+
+.households-empty {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 80px 24px;
+    text-align: center;
+    gap: 14px;
+}
+.households-empty-title { font-size: 22px; font-weight: 600; color: var(--text-secondary); }
+.households-empty-sub { font-size: 14px; color: var(--text-muted); max-width: 300px; line-height: 1.5; }
+
+/* Create household modal */
+.household-add-participant-row { display: flex; gap: 8px; align-items: center; }
+.household-add-participant-row input { flex: 1; width: auto; }
+
 /* Responsive */
 @media (max-width: 750px) {
     .bills-panels { flex-direction: column; }

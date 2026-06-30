@@ -14,19 +14,31 @@
     <div id="app">
         <main id="main-content">
 
-            <!-- Bills page -->
-            <div id="bills-page" class="page active">
-
+            <!-- Households page -->
+            <div id="households-page" class="page active">
                 <div class="page-header">
                     <h2>Räkningar</h2>
+                    <button class="btn btn-primary btn-small" onclick="openCreateHouseholdModal()">+ Nytt hushåll</button>
+                </div>
+                <div id="households-grid" class="households-grid"></div>
+            </div>
+
+            <!-- Bills page -->
+            <div id="bills-page" class="page">
+
+                <div class="page-header">
+                    <div class="page-header-inner">
+                        <button class="btn btn-small back-btn" onclick="goBackToHouseholds()">‹ Hushåll</button>
+                        <h2 id="bills-household-name">Räkningar</h2>
+                    </div>
                 </div>
 
                 <!-- Toggle bar + month nav -->
                 <div class="bills-header">
                     <div class="bills-view-tabs">
-                        <button class="bills-view-tab active" data-view="calendar" onclick="toggleBillsView('calendar')"><span class="tab-label-desktop">Kalender</span><span class="tab-label-mobile">Inkomst</span></button>
-                        <button class="bills-view-tab active" data-view="costs"    onclick="toggleBillsView('costs')">Räkningar</button>
-                        <button class="bills-view-tab active" data-view="settlement" onclick="toggleBillsView('settlement')">Uppgörelse</button>
+                        <button class="bills-view-tab active" data-view="calendar"    onclick="toggleBillsView('calendar')"><span class="tab-label-desktop">Kalender</span><span class="tab-label-mobile">Inkomst</span></button>
+                        <button class="bills-view-tab active" data-view="costs"       onclick="toggleBillsView('costs')">Räkningar</button>
+                        <button class="bills-view-tab active" data-view="settlement"  onclick="toggleBillsView('settlement')">Uppgörelse</button>
                     </div>
                     <div class="bills-month-nav">
                         <button class="btn btn-small" onclick="billsChangeMonth(-1)" title="Föregående månad">‹</button>
@@ -117,6 +129,34 @@
             </div>
 
         </main>
+    </div>
+
+    <!-- Create Household Modal -->
+    <div id="create-household-modal" class="modal hidden" onclick="if(event.target===this)closeCreateHouseholdModal()">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Nytt hushåll</h2>
+                <button class="close-btn" onclick="closeCreateHouseholdModal()">&#x2715;</button>
+            </div>
+            <div class="form-group">
+                <label>Hushållets namn</label>
+                <input type="text" id="household-name-input" placeholder="t.ex. Hemma, Lägenheten…" autocomplete="off"
+                       onkeydown="if(event.key==='Enter')document.getElementById('household-participant-input').focus()">
+            </div>
+            <div class="form-group">
+                <label>Deltagare</label>
+                <div class="household-add-participant-row">
+                    <input type="text" id="household-participant-input" placeholder="Lägg till namn…" autocomplete="off"
+                           onkeydown="if(event.key==='Enter')addHouseholdParticipant()">
+                    <button class="btn btn-small" onclick="addHouseholdParticipant()">+</button>
+                </div>
+                <div id="household-participants-chips" class="bills-partners-chips" style="margin-top:10px;min-height:28px"></div>
+            </div>
+            <div class="form-actions">
+                <button class="btn" onclick="closeCreateHouseholdModal()">Avbryt</button>
+                <button class="btn btn-primary" onclick="createHousehold()">Skapa hushåll</button>
+            </div>
+        </div>
     </div>
 
     <!-- Add Bill Modal -->
