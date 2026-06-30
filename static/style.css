@@ -86,6 +86,8 @@ body {
 .btn:hover { border-color: var(--text-muted); background: var(--border-light); }
 .btn-primary { background-color: var(--accent); color: #faf7f2; border-color: var(--accent); }
 .btn-primary:hover { background-color: #4d6a50; border-color: #4d6a50; }
+.btn-danger { background-color: var(--danger); color: #faf7f2; border-color: var(--danger); }
+.btn-danger:hover { background-color: #9a5040; border-color: #9a5040; }
 .btn-small { padding: 5px 12px; font-size: 12px; border-radius: 8px; min-height: 36px; }
 
 /* ── Card ── */
@@ -206,7 +208,10 @@ body {
     box-shadow: 0 4px 20px rgba(90,122,94,0.10);
     transform: translateY(-1px);
 }
-.household-card-name { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+.household-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.household-card-name { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; flex: 1; }
+.household-card-settings { background: none; border: none; cursor: pointer; color: var(--text-muted); font-size: 18px; padding: 0; line-height: 1; flex-shrink: 0; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-xs); transition: color 0.15s, background 0.15s; }
+.household-card-settings:hover { color: var(--text-primary); background: var(--border); }
 .household-card-participants { display: flex; gap: 6px; flex-wrap: wrap; min-height: 22px; }
 .household-card-participant { background: var(--border-light); color: var(--text-secondary); border-radius: 20px; padding: 3px 10px; font-size: 12px; font-weight: 500; }
 .household-card-footer { display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--border); padding-top: 10px; }
