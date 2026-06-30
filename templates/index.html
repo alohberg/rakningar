@@ -155,6 +155,38 @@
         </div>
     </div>
 
+    <!-- Edit Household Modal -->
+    <div id="edit-household-modal" class="modal hidden" onclick="if(event.target===this)closeEditHouseholdModal()">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Redigera hushåll</h2>
+                <button class="close-btn" onclick="closeEditHouseholdModal()">&#x2715;</button>
+            </div>
+            <input type="hidden" id="edit-household-id">
+            <div class="form-group">
+                <label>Namn</label>
+                <input type="text" id="edit-household-name-input" autocomplete="off"
+                       onkeydown="if(event.key==='Enter')document.getElementById('edit-household-member-input').focus()">
+            </div>
+            <div class="form-group">
+                <label>Deltagare</label>
+                <div class="household-add-participant-row">
+                    <input type="text" id="edit-household-member-input" placeholder="Lägg till namn…" autocomplete="off"
+                           onkeydown="if(event.key==='Enter')addEditHouseholdMember()">
+                    <button class="btn btn-small" onclick="addEditHouseholdMember()">+</button>
+                </div>
+                <div id="edit-household-members-chips" class="bills-partners-chips" style="margin-top:10px;min-height:28px"></div>
+            </div>
+            <div class="form-actions" style="justify-content:space-between">
+                <button class="btn btn-danger" onclick="deleteHousehold()">Ta bort hushåll</button>
+                <div style="display:flex;gap:8px">
+                    <button class="btn" onclick="closeEditHouseholdModal()">Avbryt</button>
+                    <button class="btn btn-primary" onclick="saveEditHousehold()">Spara</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Add Bill Modal -->
     <div id="add-bill-modal" class="modal hidden" onclick="if(event.target===this)closeAddBillModal()">
         <div class="modal-content modal-sm">

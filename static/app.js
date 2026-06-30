@@ -248,7 +248,10 @@ function renderHouseholdsPage() {
         const settledBadge = isSettled ? '<span class="household-card-settled">✓ Uppgjord</span>' : '';
         return `
         <div class="household-card" onclick="openHousehold(${h.id})">
-            <div class="household-card-name">${escHtml(h.name)}</div>
+            <div class="household-card-header">
+                <div class="household-card-name">${escHtml(h.name)}</div>
+                <button class="household-card-settings" onclick="event.stopPropagation();openEditHouseholdModal(${h.id})" title="Redigera hushåll">···</button>
+            </div>
             <div class="household-card-participants">${participantChips}</div>
             <div class="household-card-footer">
                 <div class="household-card-stat">
@@ -326,6 +329,129 @@ function createHousehold() {
 
     closeCreateHouseholdModal();
     openHousehold(newId);
+}
+
+// ── Edit household ───────────────────────────────────────────────────────────────────────────────────
+
+let _editHouseholdMembers = [];
+
+function openEditHouseholdModal(id) {
+    const h = householdsState.list.find(x => x.id === id);
+    if (!h) return;
+    document.getElementById('edit-household-id').value = id;
+    document.getElementById('edit-household-name-input').value = h.name;
+    document.getElementById('edit-household-member-input').value = '';
+    try { _editHouseholdMembers = JSON.parse(localStorage.getItem(`rkn_partners_${id}`) || '[]'); }
+    catch(e) { _editHouseholdMembers = []; }
+    _renderEditHouseholdMembers();
+    document.getElementById('edit-household-modal').classList.remove('hidden');
+    setTimeout(() => document.getElementById('edit-household-name-input').focus(), 50);
+}
+
+function closeEditHouseholdModal() {
+    document.getElementById('edit-household-modal').classList.add('hidden');
+}
+
+function addEditHouseholdMember() {
+    const input = document.getElementById('edit-household-member-input');
+    const name = (input.value || '').trim();
+    if (!name) return;
+    if (_editHouseholdMembers.some(p => p.name.toLowerCase() === name.toLowerCase())) {
+        showToast('Deltagare finns redan', 'error');
+        return;
+    }
+    const id = _editHouseholdMembers.length === 0 ? 1
+        : Math.max(..._editHouseholdMembers.map(p => p.id)) + 1;
+    _editHouseholdMembers.push({ id, name });
+    input.value = '';
+    input.focus();
+    _renderEditHouseholdMembers();
+}
+
+function removeEditHouseholdMember(idx) {
+    _editHouseholdMembers.splice(idx, 1);
+    _renderEditHouseholdMembers();
+}
+
+function _renderEditHouseholdMembers() {
+    const el = document.getElementById('edit-household-members-chips');
+    if (!el) return;
+    el.innerHTML = _editHouseholdMembers.map((p, i) => `
+        <span class="bills-partner-chip">
+            <span>${escHtml(p.name)}</span>
+            <button class="bills-partner-delete" onclick="removeEditHouseholdMember(${i})" title="Ta bort">×</button>
+        </span>`).join('');
+}
+
+function saveEditHousehold() {
+    const id   = parseInt(document.getElementById('edit-household-id').value);
+    const name = (document.getElementById('edit-household-name-input').value || '').trim();
+    if (!name) { showToast('Ange ett namn', 'error'); return; }
+    const h = householdsState.list.find(x => x.id === id);
+    if (!h) return;
+
+    // Find removed member IDs to also clean up their bills
+    let oldMembers = [];
+    try { oldMembers = JSON.parse(localStorage.getItem(`rkn_partners_${id}`) || '[]'); } catch(e) {}
+    const newIds    = new Set(_editHouseholdMembers.map(p => p.id));
+    const removedIds = new Set(oldMembers.filter(p => !newIds.has(p.id)).map(p => p.id));
+
+    h.name = name;
+    _saveHouseholds();
+
+    try { localStorage.setItem(`rkn_partners_${id}`, JSON.stringify(_editHouseholdMembers)); } catch(e) {}
+
+    if (removedIds.size > 0) {
+        try {
+            const bills    = JSON.parse(localStorage.getItem(`rkn_bills_${id}`) || '[]');
+            const filtered = bills.filter(b => !removedIds.has(b.paid_by));
+            localStorage.setItem(`rkn_bills_${id}`, JSON.stringify(filtered));
+        } catch(e) {}
+    }
+
+    // Sync live state if this household is open
+    if (householdsState.activeId === id) {
+        const nameEl = document.getElementById('bills-household-name');
+        if (nameEl) nameEl.textContent = name;
+        billsState.partners = [..._editHouseholdMembers];
+        if (removedIds.size > 0) {
+            billsState.allBills = billsState.allBills.filter(b => !removedIds.has(b.paid_by));
+        }
+        const monthView = document.getElementById('bills-month-view');
+        if (monthView && !monthView.classList.contains('hidden')) _refreshForMonth();
+    }
+
+    closeEditHouseholdModal();
+    renderHouseholdsPage();
+    showToast('Hushåll sparat', 'success');
+}
+
+function deleteHousehold() {
+    const id = parseInt(document.getElementById('edit-household-id').value);
+    const h  = householdsState.list.find(x => x.id === id);
+    if (!h) return;
+    if (!confirm(`Ta bort "${h.name}"? All data raderas permanent.`)) return;
+
+    householdsState.list = householdsState.list.filter(x => x.id !== id);
+    _saveHouseholds();
+
+    localStorage.removeItem(`rkn_partners_${id}`);
+    localStorage.removeItem(`rkn_bills_${id}`);
+    localStorage.removeItem(`rkn_settled_${id}`);
+    const incKeys = [];
+    for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith(`rkn_inc_${id}_`)) incKeys.push(key);
+    }
+    incKeys.forEach(key => localStorage.removeItem(key));
+
+    closeEditHouseholdModal();
+    if (householdsState.activeId === id) {
+        goBackToHouseholds();
+    } else {
+        renderHouseholdsPage();
+    }
+    showToast('Hushåll borttaget', 'success');
 }
 
 // ── Month navigation: calendar ↔ month detail ─────────────────────────────────────────────────────
