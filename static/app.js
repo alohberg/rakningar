@@ -46,6 +46,7 @@ const billsState = {
     monthlyIncomes:    {},
     monthsWithBills:   new Set(),
     settledMonths:     new Set(),
+    activeTab:         'income',
     comparisonVisible: false,
     comparisonCharts:  {},
     comparisonData:    null,
@@ -161,14 +162,17 @@ function showHouseholdsPage() {
 
 function goBackToHouseholds() {
     destroyBillsCharts();
-    if (billsState.comparisonVisible) {
-        billsState.comparisonVisible = false;
-        const section = document.getElementById('bills-comparison-section');
-        if (section) section.classList.add('hidden');
-        const btn = document.getElementById('bills-comparison-btn');
-        if (btn) btn.classList.remove('active');
-        billsState.selectedComparisonMonths = new Set();
-    }
+    billsState.comparisonVisible = false;
+    const section = document.getElementById('bills-comparison-section');
+    if (section) section.classList.add('hidden');
+    const btn = document.getElementById('bills-comparison-btn');
+    if (btn) btn.classList.remove('active');
+    billsState.selectedComparisonMonths = new Set();
+
+    // Reset to calendar view for next time
+    document.getElementById('bills-calendar-view').classList.remove('hidden');
+    document.getElementById('bills-month-view').classList.add('hidden');
+
     document.getElementById('bills-page').classList.remove('active');
     document.getElementById('households-page').classList.add('active');
     householdsState.activeId = null;
@@ -178,13 +182,14 @@ function goBackToHouseholds() {
 function openHousehold(id) {
     householdsState.activeId = id;
 
-    // Reset bills view state
     billsState.comparisonVisible = false;
     billsState.comparisonCharts  = {};
     billsState.comparisonData    = null;
     billsState.selectedComparisonMonths = new Set();
     billsState.analysisView = 'income';
+    billsState.activeTab    = 'income';
     destroyBillsCharts();
+
     const section = document.getElementById('bills-comparison-section');
     if (section) section.classList.add('hidden');
     const compBtn = document.getElementById('bills-comparison-btn');
@@ -194,12 +199,15 @@ function openHousehold(id) {
     const nameEl = document.getElementById('bills-household-name');
     if (nameEl) nameEl.textContent = h ? h.name : 'Räkningar';
 
+    // Always start on calendar view
+    document.getElementById('bills-calendar-view').classList.remove('hidden');
+    document.getElementById('bills-month-view').classList.add('hidden');
+
     document.getElementById('households-page').classList.remove('active');
     document.getElementById('bills-page').classList.add('active');
 
     _loadState();
-    _refreshForMonth();
-    initMobilePanels();
+    renderBillsMonthCalendar();
 }
 
 function _getHouseholdSummary(hid) {
@@ -318,6 +326,37 @@ function createHousehold() {
 
     closeCreateHouseholdModal();
     openHousehold(newId);
+}
+
+// ── Month navigation: calendar ↔ month detail ─────────────────────────────────────────────────────
+
+function showMonthView(year, month) {
+    billsState.year    = year;
+    billsState.month   = month;
+    billsState.calYear = year;
+
+    document.getElementById('bills-calendar-view').classList.add('hidden');
+    document.getElementById('bills-month-view').classList.remove('hidden');
+
+    _refreshForMonth();
+    setMonthTab(billsState.activeTab);
+}
+
+function backToCalendar() {
+    document.getElementById('bills-month-view').classList.add('hidden');
+    document.getElementById('bills-calendar-view').classList.remove('hidden');
+    renderBillsMonthCalendar();
+}
+
+function setMonthTab(tab) {
+    billsState.activeTab = tab;
+    document.querySelectorAll('.bills-month-tab').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tab === tab);
+    });
+    ['income', 'bills', 'settlement'].forEach(t => {
+        const panel = document.getElementById(`bills-tab-${t}`);
+        if (panel) panel.classList.toggle('hidden', t !== tab);
+    });
 }
 
 // ── Refresh for current month ──────────────────────────────────────────────────────────────────────
@@ -451,17 +490,16 @@ function updateBillsMonthLabel() {
     const monthYear = `${MONTH_NAMES_SV[billsState.month - 1]} ${billsState.year}`;
     const nav = document.getElementById('bills-month-label');
     if (nav) nav.textContent = monthYear;
-    const costsTitle = document.getElementById('bills-costs-title');
-    if (costsTitle) costsTitle.textContent = `Räkningar – ${monthYear}`;
-    const settlementTitle = document.getElementById('bills-settlement-title');
-    if (settlementTitle) settlementTitle.textContent = `Uppgörelse – ${monthYear}`;
 }
 
 function renderBillsIncomeSummary() {
     const el = document.getElementById('bills-income-summary');
     if (!el) return;
     const partners = billsState.partners;
-    if (partners.length === 0) { el.innerHTML = ''; return; }
+    if (partners.length === 0) {
+        el.innerHTML = '<p class="bills-settlement-empty" style="margin-top:16px">Lägg till deltagare i Uppgörelse-fliken för att ange inkomster.</p>';
+        return;
+    }
     const totalIncome = Object.values(billsState.monthlyIncomes).reduce((s, v) => s + v, 0);
     const monthLabel  = `${MONTH_NAMES_SV[billsState.month - 1]} ${billsState.year}`;
     const rows = partners.map(p => {
@@ -515,8 +553,6 @@ function renderBillsPartners() {
     if (!list) return;
     if (billsState.partners.length === 0) {
         list.innerHTML = '<span style="font-size:13px;color:var(--text-muted);font-style:italic">Inga deltagare ännu</span>';
-        const mobileList = document.getElementById('bills-partners-list-mobile');
-        if (mobileList) mobileList.innerHTML = list.innerHTML;
         return;
     }
     list.innerHTML = billsState.partners.map(p => `
@@ -524,8 +560,6 @@ function renderBillsPartners() {
             <button class="bills-partner-chip-edit" onclick="openEditPartnerModal(${p.id})" title="Redigera">${escHtml(p.name)}</button>
             <button class="bills-partner-delete" onclick="deletePartner(${p.id})" title="Ta bort">×</button>
         </span>`).join('');
-    const mobileList = document.getElementById('bills-partners-list-mobile');
-    if (mobileList) mobileList.innerHTML = list.innerHTML;
 }
 
 function renderBillsTable() {
@@ -560,7 +594,7 @@ function renderBillsTable() {
 
 function renderBillsSettlement() {
     const body = document.getElementById('bills-settlement-body');
-    const card = document.getElementById('bills-view-settlement');
+    const card = document.getElementById('bills-tab-settlement');
     if (!body) return;
 
     const settledKey = `${billsState.year}-${billsState.month}`;
@@ -695,13 +729,10 @@ function billsJumpToMonth(year, month) {
         _renderComparisonChartData();
         return;
     }
-    billsState.year    = year;
-    billsState.month   = month;
-    billsState.calYear = year;
-    _refreshForMonth();
+    showMonthView(year, month);
 }
 
-// ── Month navigation ──────────────────────────────────────────────────────────────────────────────
+// ── Month navigation within month detail ──────────────────────────────────────────────────────────
 
 function billsChangeMonth(delta) {
     let m = billsState.month + delta;
@@ -712,73 +743,6 @@ function billsChangeMonth(delta) {
     billsState.year    = y;
     billsState.calYear = y;
     _refreshForMonth();
-    _syncComparisonToMonth();
-}
-
-function _syncComparisonToMonth() {
-    if (!billsState.comparisonVisible) return;
-    billsState.selectedComparisonMonths = new Set([`${billsState.year}-${billsState.month}`]);
-    billsState.comparisonData = _getComparisonData();
-    destroyBillsCharts();
-    _renderComparisonChartData();
-}
-
-// ── View toggles ─────────────────────────────────────────────────────────────────────────────────
-
-function toggleBillsView(view) {
-    const isMobile = window.innerWidth <= 750;
-    if (isMobile) {
-        ['calendar', 'costs', 'settlement'].forEach(v => {
-            document.getElementById(`bills-view-${v}`)?.classList.remove('mobile-active');
-            document.querySelector(`.bills-view-tab[data-view="${v}"]`)?.classList.remove('active');
-        });
-        document.getElementById(`bills-view-${view}`)?.classList.add('mobile-active');
-        document.querySelector(`.bills-view-tab[data-view="${view}"]`)?.classList.add('active');
-    } else {
-        const panel = document.getElementById(`bills-view-${view}`);
-        const btn   = document.querySelector(`.bills-view-tab[data-view="${view}"]`);
-        if (!panel) return;
-        const nowHidden = panel.classList.toggle('hidden');
-        if (btn) btn.classList.toggle('active', !nowHidden);
-    }
-}
-
-function initMobilePanels() {
-    if (window.innerWidth > 750) return;
-    ['calendar', 'costs', 'settlement'].forEach(v => {
-        document.getElementById(`bills-view-${v}`)?.classList.remove('mobile-active');
-        document.querySelector(`.bills-view-tab[data-view="${v}"]`)?.classList.remove('active');
-    });
-    document.getElementById('bills-view-calendar')?.classList.add('mobile-active');
-    document.querySelector('.bills-view-tab[data-view="calendar"]')?.classList.add('active');
-}
-
-let _lastInnerWidth = window.innerWidth;
-window.addEventListener('resize', () => {
-    const w = window.innerWidth;
-    if (w > 750) {
-        ['calendar', 'costs', 'settlement'].forEach(v => {
-            const el = document.getElementById(`bills-view-${v}`);
-            if (el) { el.classList.remove('hidden'); el.classList.remove('mobile-active'); }
-        });
-    } else if (w !== _lastInnerWidth) {
-        // iOS Safari fires resize on scroll when address bar hides/shows (height-only change)
-        initMobilePanels();
-    }
-    _lastInnerWidth = w;
-});
-
-if (window.visualViewport) {
-    window.visualViewport.addEventListener('resize', _adjustForKeyboard);
-    window.visualViewport.addEventListener('scroll', _adjustForKeyboard);
-}
-
-function _adjustForKeyboard() {
-    const modal = document.querySelector('.modal:not(.hidden)');
-    if (!modal) return;
-    const vv = window.visualViewport;
-    const keyboardHeight = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-    modal.style.paddingBottom = keyboardHeight > 50 ? `${keyboardHeight}px` : '';
 }
 
 // ── Settled ──────────────────────────────────────────────────────────────────────────────────────
@@ -887,7 +851,7 @@ function celebrateBillsSettled() {
 
 function openAddBillModal() {
     if (billsState.partners.length === 0) {
-        showToast('Lägg till minst en deltagare först', 'error');
+        showToast('Lägg till deltagare i Uppgörelse-fliken först', 'error');
         return;
     }
     const sel = document.getElementById('bill-payer-inline');
@@ -1004,6 +968,21 @@ function deletePartner(id) {
     _saveState();
     _refreshForMonth();
     showToast('Deltagare borttagen', 'success');
+}
+
+// ── Keyboard / modal adjust ───────────────────────────────────────────────────────────────────────
+
+if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', _adjustForKeyboard);
+    window.visualViewport.addEventListener('scroll', _adjustForKeyboard);
+}
+
+function _adjustForKeyboard() {
+    const modal = document.querySelector('.modal:not(.hidden)');
+    if (!modal) return;
+    const vv = window.visualViewport;
+    const keyboardHeight = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+    modal.style.paddingBottom = keyboardHeight > 50 ? `${keyboardHeight}px` : '';
 }
 
 // ── Comparison charts ─────────────────────────────────────────────────────────────────────────────

@@ -33,54 +33,51 @@
                     </div>
                 </div>
 
-                <!-- Toggle bar + month nav -->
-                <div class="bills-header">
-                    <div class="bills-view-tabs">
-                        <button class="bills-view-tab active" data-view="calendar"    onclick="toggleBillsView('calendar')"><span class="tab-label-desktop">Kalender</span><span class="tab-label-mobile">Inkomst</span></button>
-                        <button class="bills-view-tab active" data-view="costs"       onclick="toggleBillsView('costs')">Räkningar</button>
-                        <button class="bills-view-tab active" data-view="settlement"  onclick="toggleBillsView('settlement')">Uppgörelse</button>
+                <!-- Calendar view (default when entering a household) -->
+                <div id="bills-calendar-view" class="bills-cal-view">
+                    <div class="bills-cal-year-nav">
+                        <button class="btn btn-small" onclick="billsCalendarChangeYear(-1)">‹</button>
+                        <span id="bills-cal-year" class="bills-cal-year-label">—</span>
+                        <button class="btn btn-small" onclick="billsCalendarChangeYear(1)">›</button>
                     </div>
-                    <div class="bills-month-nav">
-                        <button class="btn btn-small" onclick="billsChangeMonth(-1)" title="Föregående månad">‹</button>
-                        <span id="bills-month-label" class="bills-month-label">—</span>
-                        <button class="btn btn-small" onclick="billsChangeMonth(1)"  title="Nästa månad">›</button>
+                    <div id="bills-month-calendar" class="bills-month-calendar"></div>
+                    <button class="btn bills-comparison-btn" id="bills-comparison-btn" onclick="toggleBillsComparison()">Jämför månader</button>
+                    <div id="bills-comparison-section" class="hidden">
+                        <div class="bills-analysis-tabs">
+                            <button class="bills-analysis-tab active" data-view="income"    onclick="setAnalysisView('income')">Inkomster</button>
+                            <button class="bills-analysis-tab"        data-view="total"     onclick="setAnalysisView('total')">Totalt</button>
+                            <button class="bills-analysis-tab"        data-view="perperson" onclick="setAnalysisView('perperson')">Per person</button>
+                        </div>
+                        <div class="bills-comparison-charts">
+                            <canvas id="bills-analysis-chart"></canvas>
+                        </div>
                     </div>
                 </div>
 
-                <!-- Three panels -->
-                <div class="bills-panels">
-
-                    <!-- Calendar panel -->
-                    <div class="bills-view card" id="bills-view-calendar">
-                        <div class="bills-calendar-header">
-                            <button class="btn btn-small" onclick="billsCalendarChangeYear(-1)">‹</button>
-                            <span id="bills-cal-year" class="bills-cal-year">—</span>
-                            <button class="btn btn-small" onclick="billsCalendarChangeYear(1)">›</button>
-                        </div>
-                        <div id="bills-month-calendar" class="bills-month-calendar"></div>
-                        <div id="bills-income-summary"></div>
-                        <div class="bills-mobile-participants">
-                            <div class="bills-panel-divider"></div>
-                            <div id="bills-partners-list-mobile" class="bills-partners-chips"></div>
-                            <button class="btn btn-small" style="margin-top:8px" onclick="openAddPartnerModal()">+ Lägg till deltagare</button>
-                        </div>
-                        <button class="btn bills-comparison-btn" id="bills-comparison-btn" onclick="toggleBillsComparison()">Jämför månader</button>
-                        <div id="bills-comparison-section" class="hidden">
-                            <div class="bills-analysis-tabs">
-                                <button class="bills-analysis-tab active" data-view="income"    onclick="setAnalysisView('income')">Inkomster</button>
-                                <button class="bills-analysis-tab"        data-view="total"     onclick="setAnalysisView('total')">Totalt</button>
-                                <button class="bills-analysis-tab"        data-view="perperson" onclick="setAnalysisView('perperson')">Per person</button>
-                            </div>
-                            <div class="bills-comparison-charts">
-                                <canvas id="bills-analysis-chart"></canvas>
-                            </div>
+                <!-- Month detail view (shown when a month is clicked) -->
+                <div id="bills-month-view" class="hidden">
+                    <div class="bills-month-subheader">
+                        <button class="btn btn-small back-btn" onclick="backToCalendar()">‹ Kalender</button>
+                        <div class="bills-month-nav-row">
+                            <button class="btn btn-small" onclick="billsChangeMonth(-1)">‹</button>
+                            <span id="bills-month-label" class="bills-month-label">—</span>
+                            <button class="btn btn-small" onclick="billsChangeMonth(1)">›</button>
                         </div>
                     </div>
+                    <div class="bills-month-tabs">
+                        <button class="bills-month-tab active" data-tab="income"     onclick="setMonthTab('income')">Inkomster</button>
+                        <button class="bills-month-tab"        data-tab="bills"      onclick="setMonthTab('bills')">Räkningar</button>
+                        <button class="bills-month-tab"        data-tab="settlement" onclick="setMonthTab('settlement')">Uppgörelse</button>
+                    </div>
 
-                    <!-- Bills list panel -->
-                    <div class="bills-view card" id="bills-view-costs">
-                        <div class="bills-panel-header">
-                            <h3 class="bills-panel-title" id="bills-costs-title">Räkningar</h3>
+                    <!-- Income tab -->
+                    <div id="bills-tab-income" class="bills-tab-panel">
+                        <div id="bills-income-summary"></div>
+                    </div>
+
+                    <!-- Bills tab -->
+                    <div id="bills-tab-bills" class="bills-tab-panel hidden">
+                        <div class="bills-tab-actions">
                             <button class="btn btn-primary btn-small" onclick="openAddBillModal()">+ Ny räkning</button>
                         </div>
                         <div id="bills-table-wrap">
@@ -107,12 +104,11 @@
                         </div>
                     </div>
 
-                    <!-- Settlement panel -->
-                    <div class="bills-view card" id="bills-view-settlement">
-                        <h3 class="bills-panel-title" id="bills-settlement-title">Uppgörelse</h3>
-                        <div class="bills-desktop-participants">
+                    <!-- Settlement tab -->
+                    <div id="bills-tab-settlement" class="bills-tab-panel hidden">
+                        <div class="bills-settlement-participants">
                             <div id="bills-partners-list" class="bills-partners-chips"></div>
-                            <button class="btn btn-small" style="margin-bottom:16px" onclick="openAddPartnerModal()">+ Lägg till deltagare</button>
+                            <button class="btn btn-small" style="margin-top:8px" onclick="openAddPartnerModal()">+ Lägg till deltagare</button>
                         </div>
                         <div id="bills-settlement-body">
                             <p class="bills-settlement-empty">Lägg till räkningar för att beräkna uppgörelsen.</p>
@@ -124,8 +120,8 @@
                             </label>
                         </div>
                     </div>
-
                 </div>
+
             </div>
 
         </main>
