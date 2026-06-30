@@ -214,7 +214,8 @@ body {
 .household-card-settings:hover { color: var(--text-primary); background: var(--border); }
 .household-card-participants { display: flex; gap: 6px; flex-wrap: wrap; min-height: 22px; }
 .household-card-participant { background: var(--border-light); color: var(--text-secondary); border-radius: 20px; padding: 3px 10px; font-size: 12px; font-weight: 500; }
-.household-card-footer { display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--border); padding-top: 10px; }
+.household-card-footer { display: flex; align-items: flex-start; justify-content: space-between; border-top: 1px solid var(--border); padding-top: 10px; }
+.household-card-stats { display: flex; flex-direction: column; gap: 2px; }
 .household-card-stat { font-size: 13px; color: var(--text-muted); }
 .household-card-stat strong { color: var(--text-primary); font-weight: 600; margin-right: 4px; }
 .household-card-settled { font-size: 12px; font-weight: 600; color: var(--income); }
