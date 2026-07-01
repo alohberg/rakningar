@@ -222,12 +222,15 @@ function _getHouseholdSummary(hid) {
         const { year: y, month: m } = sorted[0];
         const monthTotal = bills.filter(b => b.year === y && b.month === m).reduce((s, b) => s + b.amount, 0);
         let monthIncome = 0;
+        let hasIncomeData = false;
         partners.forEach(p => {
             const v = localStorage.getItem(`rkn_inc_${hid}_${y}_${m}_${p.id}`);
-            if (v !== null) monthIncome += parseFloat(v) || 0;
+            if (v !== null) { monthIncome += parseFloat(v) || 0; hasIncomeData = true; }
         });
-        return { partners, monthTotal, monthIncome, lastMonthLabel: `${MONTH_NAMES_SV[m - 1]} ${y}`, isSettled: settled.has(`${y}-${m}`) };
-    } catch(e) { return { partners: [], monthTotal: 0, monthIncome: 0, lastMonthLabel: '', isSettled: false }; }
+        const householdSavings     = hasIncomeData ? monthIncome - monthTotal : null;
+        const householdSavingsRate = hasIncomeData && monthIncome > 0 ? Math.round((monthIncome - monthTotal) / monthIncome * 1000) / 10 : null;
+        return { partners, monthTotal, monthIncome, lastMonthLabel: `${MONTH_NAMES_SV[m - 1]} ${y}`, isSettled: settled.has(`${y}-${m}`), householdSavings, householdSavingsRate };
+    } catch(e) { return { partners: [], monthTotal: 0, monthIncome: 0, lastMonthLabel: '', isSettled: false, householdSavings: null, householdSavingsRate: null }; }
 }
 
 function renderHouseholdsPage() {
@@ -245,15 +248,20 @@ function renderHouseholdsPage() {
     }
 
     grid.innerHTML = householdsState.list.map(h => {
-        const { partners, monthTotal, monthIncome, lastMonthLabel, isSettled } = _getHouseholdSummary(h.id);
+        const { partners, monthTotal, monthIncome, lastMonthLabel, isSettled, householdSavings, householdSavingsRate } = _getHouseholdSummary(h.id);
         const participantChips = partners.length > 0
             ? partners.map(p => `<span class="household-card-participant">${escHtml(p.name)}</span>`).join('')
             : '<span style="font-size:12px;color:var(--text-muted);font-style:italic">Inga deltagare</span>';
         const settledBadge = isSettled ? '<span class="household-card-settled">✓ Uppgjord</span>' : '';
+        const savingsColor = householdSavings !== null && householdSavings < 0 ? 'var(--danger)' : 'var(--income)';
+        const savingsLabel = householdSavings !== null
+            ? `${formatCurrency(Math.round(householdSavings))}${householdSavingsRate !== null ? ' (' + (householdSavingsRate > 0 ? '+' : '') + householdSavingsRate + '%)' : ''}`
+            : '—';
         const statsHtml = lastMonthLabel
             ? `<div class="household-card-stats">
                 <div class="household-card-stat"><strong>${monthTotal > 0 ? formatCurrency(monthTotal) : '—'}</strong>Förra mån. utgifter</div>
                 <div class="household-card-stat"><strong>${monthIncome > 0 ? formatCurrency(monthIncome) : '—'}</strong>Förra mån. inkomster</div>
+                ${householdSavings !== null ? `<div class="household-card-stat"><strong style="color:${savingsColor}">${savingsLabel}</strong>Förra mån. sparande</div>` : ''}
                </div>`
             : '<div class="household-card-stat" style="font-style:italic;color:var(--text-muted)">Inga räkningar ännu</div>';
         return `
@@ -580,6 +588,61 @@ function _calculateSettlement() {
     };
 }
 
+// ── Savings calculation ───────────────────────────────────────────────────────────────────────────
+
+function _calculateSavings() {
+    const { partners, bills, monthlyIncomes } = billsState;
+    const totalIncome   = Object.values(monthlyIncomes).reduce((s, v) => s + v, 0);
+    const totalExpenses = bills.reduce((s, b) => s + b.amount, 0);
+    const householdSavings     = totalIncome - totalExpenses;
+    const householdSavingsRate = totalIncome > 0 ? Math.round(householdSavings / totalIncome * 1000) / 10 : null;
+
+    const totalSplit = bills.filter(b => b.is_split).reduce((s, b) => s + b.amount, 0);
+    const n = partners.length;
+
+    const perPerson = partners.map(p => {
+        const income          = monthlyIncomes[p.id] || 0;
+        const personalExpenses = bills.filter(b => !b.is_split && b.paid_by === p.id).reduce((s, b) => s + b.amount, 0);
+        const fairShare       = totalIncome > 0
+            ? Math.round(totalSplit * income / totalIncome * 100) / 100
+            : (n > 0 ? Math.round(totalSplit / n * 100) / 100 : 0);
+        const savings     = income - personalExpenses - fairShare;
+        const savingsRate = income > 0 ? Math.round(savings / income * 1000) / 10 : null;
+        return { id: p.id, name: p.name, income, savings, savingsRate };
+    });
+
+    return { totalIncome, totalExpenses, householdSavings, householdSavingsRate, perPerson };
+}
+
+function _renderSavingsBlock() {
+    const wrap = document.getElementById('bills-savings-wrap');
+    if (!wrap) return;
+    const { totalIncome, householdSavings, householdSavingsRate, perPerson } = _calculateSavings();
+    if (totalIncome === 0) { wrap.innerHTML = ''; return; }
+
+    const rateClass  = r => r === null ? 'neutral' : r > 0 ? 'positive' : r < 0 ? 'negative' : 'neutral';
+    const rateBadge  = r => r === null ? '' : `<span class="bills-savings-rate ${rateClass(r)}">${r > 0 ? '+' : ''}${r}%</span>`;
+    const monthLabel = `${MONTH_NAMES_SV[billsState.month - 1]} ${billsState.year}`;
+
+    const personRows = perPerson.length > 1 ? perPerson.map(p => `
+        <div class="bills-savings-row">
+            <span class="bills-savings-name">${escHtml(p.name)}</span>
+            <span class="bills-savings-amount">${formatCurrency(Math.round(p.savings))}</span>
+            ${rateBadge(p.savingsRate)}
+        </div>`).join('') : '';
+
+    wrap.innerHTML = `
+        <div class="bills-savings-block">
+            <div class="bills-savings-block-title">Sparande – ${monthLabel}</div>
+            <div class="bills-savings-row">
+                <span class="bills-savings-name">${perPerson.length > 1 ? 'Hushållet' : (perPerson[0] ? escHtml(perPerson[0].name) : 'Totalt')}</span>
+                <span class="bills-savings-amount">${formatCurrency(Math.round(householdSavings))}</span>
+                ${rateBadge(householdSavingsRate)}
+            </div>
+            ${personRows}
+        </div>`;
+}
+
 // ── Comparison data calculation ────────────────────────────────────────────────────────────────────
 
 function _getComparisonData() {
@@ -658,7 +721,9 @@ function renderBillsIncomeSummary() {
                 <span>Totalt</span>
                 <span>${totalIncome > 0 ? formatCurrency(totalIncome) + '/mån' : '—'}</span>
             </div>
-        </div>`;
+        </div>
+        <div id="bills-savings-wrap"></div>`;
+    _renderSavingsBlock();
 }
 
 function onBillIncomeInput(partnerId, value) {
@@ -667,6 +732,7 @@ function onBillIncomeInput(partnerId, value) {
     _persistIncome(billsState.year, billsState.month, partnerId, income);
     _updateIncomeShareBadges();
     renderBillsSettlement();
+    _renderSavingsBlock();
 }
 
 function _updateIncomeShareBadges() {
