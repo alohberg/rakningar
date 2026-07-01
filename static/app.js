@@ -44,6 +44,7 @@ const billsState = {
     bills:             [],
     allBills:          [],
     monthlyIncomes:    {},
+    monthlySavings:    {},
     monthsWithBills:   new Set(),
     settledMonths:     new Set(),
     activeTab:         'income',
@@ -142,6 +143,14 @@ function _readLocalIncome(y, m, pid) {
         return v !== null ? (parseFloat(v) || 0) : 0;
     } catch(e) { return 0; }
 }
+function _savingsKey(y, m, pid) { return `rkn_sav_${_hid()}_${y}_${m}_${pid}`; }
+function _persistSavings(y, m, pid, v) { try { localStorage.setItem(_savingsKey(y, m, pid), String(v)); } catch(e) {} }
+function _readLocalSavings(y, m, pid) {
+    try {
+        const v = localStorage.getItem(_savingsKey(y, m, pid));
+        return v !== null ? (parseFloat(v) || 0) : 0;
+    } catch(e) { return 0; }
+}
 
 // ── Boot ──────────────────────────────────────────────────────────────────────────────────────────
 
@@ -222,15 +231,17 @@ function _getHouseholdSummary(hid) {
         const { year: y, month: m } = sorted[0];
         const monthTotal = bills.filter(b => b.year === y && b.month === m).reduce((s, b) => s + b.amount, 0);
         let monthIncome = 0;
-        let hasIncomeData = false;
+        let monthSavings = 0;
+        let hasSavingsData = false;
         partners.forEach(p => {
-            const v = localStorage.getItem(`rkn_inc_${hid}_${y}_${m}_${p.id}`);
-            if (v !== null) { monthIncome += parseFloat(v) || 0; hasIncomeData = true; }
+            const iv = localStorage.getItem(`rkn_inc_${hid}_${y}_${m}_${p.id}`);
+            if (iv !== null) monthIncome += parseFloat(iv) || 0;
+            const sv = localStorage.getItem(`rkn_sav_${hid}_${y}_${m}_${p.id}`);
+            if (sv !== null) { monthSavings += parseFloat(sv) || 0; hasSavingsData = true; }
         });
-        const householdSavings     = hasIncomeData ? monthIncome - monthTotal : null;
-        const householdSavingsRate = hasIncomeData && monthIncome > 0 ? Math.round((monthIncome - monthTotal) / monthIncome * 1000) / 10 : null;
-        return { partners, monthTotal, monthIncome, lastMonthLabel: `${MONTH_NAMES_SV[m - 1]} ${y}`, isSettled: settled.has(`${y}-${m}`), householdSavings, householdSavingsRate };
-    } catch(e) { return { partners: [], monthTotal: 0, monthIncome: 0, lastMonthLabel: '', isSettled: false, householdSavings: null, householdSavingsRate: null }; }
+        const householdSavings = hasSavingsData ? monthSavings : null;
+        return { partners, monthTotal, monthIncome, lastMonthLabel: `${MONTH_NAMES_SV[m - 1]} ${y}`, isSettled: settled.has(`${y}-${m}`), householdSavings };
+    } catch(e) { return { partners: [], monthTotal: 0, monthIncome: 0, lastMonthLabel: '', isSettled: false, householdSavings: null }; }
 }
 
 function renderHouseholdsPage() {
@@ -248,15 +259,13 @@ function renderHouseholdsPage() {
     }
 
     grid.innerHTML = householdsState.list.map(h => {
-        const { partners, monthTotal, monthIncome, lastMonthLabel, isSettled, householdSavings, householdSavingsRate } = _getHouseholdSummary(h.id);
+        const { partners, monthTotal, monthIncome, lastMonthLabel, isSettled, householdSavings } = _getHouseholdSummary(h.id);
         const participantChips = partners.length > 0
             ? partners.map(p => `<span class="household-card-participant">${escHtml(p.name)}</span>`).join('')
             : '<span style="font-size:12px;color:var(--text-muted);font-style:italic">Inga deltagare</span>';
         const settledBadge = isSettled ? '<span class="household-card-settled">✓ Uppgjord</span>' : '';
         const savingsColor = householdSavings !== null && householdSavings < 0 ? 'var(--danger)' : 'var(--income)';
-        const savingsLabel = householdSavings !== null
-            ? `${formatCurrency(Math.round(householdSavings))}${householdSavingsRate !== null ? ' (' + (householdSavingsRate > 0 ? '+' : '') + householdSavingsRate + '%)' : ''}`
-            : '—';
+        const savingsLabel = householdSavings !== null ? formatCurrency(Math.round(householdSavings)) : '—';
         const statsHtml = lastMonthLabel
             ? `<div class="household-card-stats">
                 <div class="household-card-stat"><strong>${monthTotal > 0 ? formatCurrency(monthTotal) : '—'}</strong>Förra mån. utgifter</div>
@@ -508,9 +517,12 @@ function _refreshForMonth() {
     );
     billsState.monthsWithBills = new Set(billsState.allBills.map(b => `${b.year}-${b.month}`));
     billsState.monthlyIncomes  = {};
+    billsState.monthlySavings  = {};
     billsState.partners.forEach(p => {
         const inc = _readLocalIncome(billsState.year, billsState.month, p.id);
         if (inc > 0) billsState.monthlyIncomes[p.id] = inc;
+        const sav = _readLocalSavings(billsState.year, billsState.month, p.id);
+        if (sav > 0) billsState.monthlySavings[p.id] = sav;
     });
     updateBillsMonthLabel();
     renderBillsPartners();
@@ -588,58 +600,34 @@ function _calculateSettlement() {
     };
 }
 
-// ── Savings calculation ───────────────────────────────────────────────────────────────────────────
-
-function _calculateSavings() {
-    const { partners, bills, monthlyIncomes } = billsState;
-    const totalIncome   = Object.values(monthlyIncomes).reduce((s, v) => s + v, 0);
-    const totalExpenses = bills.reduce((s, b) => s + b.amount, 0);
-    const householdSavings     = totalIncome - totalExpenses;
-    const householdSavingsRate = totalIncome > 0 ? Math.round(householdSavings / totalIncome * 1000) / 10 : null;
-
-    const totalSplit = bills.filter(b => b.is_split).reduce((s, b) => s + b.amount, 0);
-    const n = partners.length;
-
-    const perPerson = partners.map(p => {
-        const income          = monthlyIncomes[p.id] || 0;
-        const personalExpenses = bills.filter(b => !b.is_split && b.paid_by === p.id).reduce((s, b) => s + b.amount, 0);
-        const fairShare       = totalIncome > 0
-            ? Math.round(totalSplit * income / totalIncome * 100) / 100
-            : (n > 0 ? Math.round(totalSplit / n * 100) / 100 : 0);
-        const savings     = income - personalExpenses - fairShare;
-        const savingsRate = income > 0 ? Math.round(savings / income * 1000) / 10 : null;
-        return { id: p.id, name: p.name, income, savings, savingsRate };
-    });
-
-    return { totalIncome, totalExpenses, householdSavings, householdSavingsRate, perPerson };
-}
-
 function _renderSavingsBlock() {
     const wrap = document.getElementById('bills-savings-wrap');
     if (!wrap) return;
-    const { totalIncome, householdSavings, householdSavingsRate, perPerson } = _calculateSavings();
-    if (totalIncome === 0) { wrap.innerHTML = ''; return; }
-
-    const rateClass  = r => r === null ? 'neutral' : r > 0 ? 'positive' : r < 0 ? 'negative' : 'neutral';
-    const rateBadge  = r => r === null ? '' : `<span class="bills-savings-rate ${rateClass(r)}">${r > 0 ? '+' : ''}${r}%</span>`;
-    const monthLabel = `${MONTH_NAMES_SV[billsState.month - 1]} ${billsState.year}`;
-
-    const personRows = perPerson.length > 1 ? perPerson.map(p => `
-        <div class="bills-savings-row">
-            <span class="bills-savings-name">${escHtml(p.name)}</span>
-            <span class="bills-savings-amount">${formatCurrency(Math.round(p.savings))}</span>
-            ${rateBadge(p.savingsRate)}
-        </div>`).join('') : '';
-
-    wrap.innerHTML = `
-        <div class="bills-savings-block">
-            <div class="bills-savings-block-title">Sparande – ${monthLabel}</div>
-            <div class="bills-savings-row">
-                <span class="bills-savings-name">${perPerson.length > 1 ? 'Hushållet' : (perPerson[0] ? escHtml(perPerson[0].name) : 'Totalt')}</span>
-                <span class="bills-savings-amount">${formatCurrency(Math.round(householdSavings))}</span>
-                ${rateBadge(householdSavingsRate)}
+    const partners = billsState.partners;
+    if (partners.length === 0) { wrap.innerHTML = ''; return; }
+    const monthLabel   = `${MONTH_NAMES_SV[billsState.month - 1]} ${billsState.year}`;
+    const totalSavings = Object.values(billsState.monthlySavings).reduce((s, v) => s + v, 0);
+    const rows = partners.map(p => {
+        const sav = billsState.monthlySavings[p.id] || 0;
+        return `
+        <div class="bills-income-row">
+            <span class="bills-income-name">${escHtml(p.name)}</span>
+            <div class="bills-income-input-wrap">
+                <input type="number" class="bills-income-input" data-pid="${p.id}"
+                       value="${sav || ''}" placeholder="0" min="0" step="1000"
+                       oninput="onBillSavingsInput(${p.id}, this.value)">
+                <span class="bills-income-unit">kr</span>
             </div>
-            ${personRows}
+        </div>`;
+    }).join('');
+    wrap.innerHTML = `
+        <div class="bills-income-block" style="margin-top:12px">
+            <div class="bills-income-block-title">Sparande – ${monthLabel}</div>
+            ${rows}
+            <div class="bills-income-block-total">
+                <span>Totalt</span>
+                <span>${totalSavings > 0 ? formatCurrency(totalSavings) + '/mån' : '—'}</span>
+            </div>
         </div>`;
 }
 
@@ -732,7 +720,21 @@ function onBillIncomeInput(partnerId, value) {
     _persistIncome(billsState.year, billsState.month, partnerId, income);
     _updateIncomeShareBadges();
     renderBillsSettlement();
-    _renderSavingsBlock();
+}
+
+function onBillSavingsInput(partnerId, value) {
+    const sav = parseFloat(value) || 0;
+    billsState.monthlySavings[partnerId] = sav;
+    _persistSavings(billsState.year, billsState.month, partnerId, sav);
+    _updateSavingsTotalBadge();
+}
+
+function _updateSavingsTotalBadge() {
+    const total  = Object.values(billsState.monthlySavings).reduce((s, v) => s + v, 0);
+    const wrap   = document.getElementById('bills-savings-wrap');
+    if (!wrap) return;
+    const totalEl = wrap.querySelector('.bills-income-block-total span:last-child');
+    if (totalEl) totalEl.textContent = total > 0 ? formatCurrency(total) + '/mån' : '—';
 }
 
 function _updateIncomeShareBadges() {
@@ -1164,6 +1166,7 @@ function deletePartner(id) {
     billsState.partners = billsState.partners.filter(p => p.id !== id);
     billsState.allBills = billsState.allBills.filter(b => b.paid_by !== id);
     delete billsState.monthlyIncomes[id];
+    delete billsState.monthlySavings[id];
     _saveState();
     _refreshForMonth();
     showToast('Deltagare borttagen', 'success');
