@@ -607,8 +607,19 @@ function _renderSavingsBlock() {
     if (partners.length === 0) { wrap.innerHTML = ''; return; }
     const monthLabel   = `${MONTH_NAMES_SV[billsState.month - 1]} ${billsState.year}`;
     const totalSavings = Object.values(billsState.monthlySavings).reduce((s, v) => s + v, 0);
+    const totalIncome  = Object.values(billsState.monthlyIncomes).reduce((s, v) => s + v, 0);
+    const householdRate = totalIncome > 0 ? Math.round(totalSavings / totalIncome * 100) : null;
+
+    const rateBadge = (sav, inc) => {
+        if (inc <= 0) return '';
+        const r = Math.round(sav / inc * 100);
+        const cls = r >= 0 ? 'positive' : 'negative';
+        return `<span class="bills-savings-rate-badge ${cls}">${r}%</span>`;
+    };
+
     const rows = partners.map(p => {
         const sav = billsState.monthlySavings[p.id] || 0;
+        const inc = billsState.monthlyIncomes[p.id] || 0;
         return `
         <div class="bills-income-row">
             <span class="bills-income-name">${escHtml(p.name)}</span>
@@ -618,15 +629,24 @@ function _renderSavingsBlock() {
                        oninput="onBillSavingsInput(${p.id}, this.value)">
                 <span class="bills-income-unit">kr</span>
             </div>
+            ${rateBadge(sav, inc)}
         </div>`;
     }).join('');
+
+    const totalRateHtml = householdRate !== null
+        ? `<span class="bills-savings-rate-badge ${householdRate >= 0 ? 'positive' : 'negative'}">${householdRate}%</span>`
+        : '';
+
     wrap.innerHTML = `
         <div class="bills-income-block" style="margin-top:12px">
             <div class="bills-income-block-title">Sparande – ${monthLabel}</div>
             ${rows}
             <div class="bills-income-block-total">
                 <span>Totalt</span>
-                <span>${totalSavings > 0 ? formatCurrency(totalSavings) + '/mån' : '—'}</span>
+                <span style="display:flex;align-items:center;gap:8px">
+                    <span>${totalSavings > 0 ? formatCurrency(totalSavings) + '/mån' : '—'}</span>
+                    ${totalRateHtml}
+                </span>
             </div>
         </div>`;
 }
@@ -720,21 +740,14 @@ function onBillIncomeInput(partnerId, value) {
     _persistIncome(billsState.year, billsState.month, partnerId, income);
     _updateIncomeShareBadges();
     renderBillsSettlement();
+    _renderSavingsBlock();
 }
 
 function onBillSavingsInput(partnerId, value) {
     const sav = parseFloat(value) || 0;
     billsState.monthlySavings[partnerId] = sav;
     _persistSavings(billsState.year, billsState.month, partnerId, sav);
-    _updateSavingsTotalBadge();
-}
-
-function _updateSavingsTotalBadge() {
-    const total  = Object.values(billsState.monthlySavings).reduce((s, v) => s + v, 0);
-    const wrap   = document.getElementById('bills-savings-wrap');
-    if (!wrap) return;
-    const totalEl = wrap.querySelector('.bills-income-block-total span:last-child');
-    if (totalEl) totalEl.textContent = total > 0 ? formatCurrency(total) + '/mån' : '—';
+    _renderSavingsBlock();
 }
 
 function _updateIncomeShareBadges() {
@@ -1240,6 +1253,17 @@ function _getIncomeForMonths(monthKeys) {
     });
 }
 
+function _getSavingsForMonths(monthKeys) {
+    return monthKeys.map(key => {
+        const [y, m] = key.split('-').map(Number);
+        const savings = {};
+        billsState.partners.forEach(p => {
+            savings[p.name] = _readLocalSavings(y, m, p.id);
+        });
+        return { key, year: y, month: m, savings };
+    });
+}
+
 function _compMonthKey(m) { return `${m.year}-${m.month}`; }
 
 function _zeroMonth(year, month, partners) {
@@ -1256,7 +1280,8 @@ function _renderComparisonChartData() {
 
     const hasBills = data && data.months && data.months.length > 0;
 
-    if (!hasBills && billsState.analysisView !== 'income') {
+    const savingsView = billsState.analysisView === 'savings' || billsState.analysisView === 'savingsperson';
+    if (!hasBills && !savingsView && billsState.analysisView !== 'income') {
         billsState.analysisView = 'income';
     }
 
@@ -1305,6 +1330,27 @@ function _renderComparisonChartData() {
         datasets = partners.map((p, i) => {
             const [bg, border] = PARTNER_COLORS[i % PARTNER_COLORS.length];
             return { label: p.name, data: incomeMonths.map(m => m.incomes[p.name] || 0),
+                     backgroundColor: bg, borderColor: border, borderWidth: 1, borderRadius: 4 };
+        });
+        scales = { y: { beginAtZero: true, ticks: { callback: v => v + ' kr', font: { size: 10 } } } };
+
+    } else if (billsState.analysisView === 'savings') {
+        const savingsMonths = _getSavingsForMonths(sortedKeys);
+        datasets = [{
+            label: 'Sparande',
+            data: savingsMonths.map(m => Object.values(m.savings).reduce((s, v) => s + v, 0)),
+            backgroundColor: STACK_GREEN,
+            borderColor: STACK_GREEN_BORDER,
+            borderWidth: 1,
+            borderRadius: 4,
+        }];
+        scales = { y: { beginAtZero: true, ticks: { callback: v => v + ' kr', font: { size: 10 } } } };
+
+    } else if (billsState.analysisView === 'savingsperson') {
+        const savingsMonths = _getSavingsForMonths(sortedKeys);
+        datasets = partners.map((p, i) => {
+            const [bg, border] = PARTNER_COLORS[i % PARTNER_COLORS.length];
+            return { label: p.name, data: savingsMonths.map(m => m.savings[p.name] || 0),
                      backgroundColor: bg, borderColor: border, borderWidth: 1, borderRadius: 4 };
         });
         scales = { y: { beginAtZero: true, ticks: { callback: v => v + ' kr', font: { size: 10 } } } };

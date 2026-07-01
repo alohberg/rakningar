@@ -44,9 +44,11 @@
                     <button class="btn bills-comparison-btn" id="bills-comparison-btn" onclick="toggleBillsComparison()">Jämför månader</button>
                     <div id="bills-comparison-section" class="hidden">
                         <div class="bills-analysis-tabs">
-                            <button class="bills-analysis-tab active" data-view="income"    onclick="setAnalysisView('income')">Inkomster</button>
-                            <button class="bills-analysis-tab"        data-view="total"     onclick="setAnalysisView('total')">Totala kostnader</button>
-                            <button class="bills-analysis-tab"        data-view="perperson" onclick="setAnalysisView('perperson')">Kostnader per person</button>
+                            <button class="bills-analysis-tab active" data-view="income"        onclick="setAnalysisView('income')">Inkomster</button>
+                            <button class="bills-analysis-tab"        data-view="total"         onclick="setAnalysisView('total')">Totala kostnader</button>
+                            <button class="bills-analysis-tab"        data-view="perperson"     onclick="setAnalysisView('perperson')">Kostnader per person</button>
+                            <button class="bills-analysis-tab"        data-view="savings"       onclick="setAnalysisView('savings')">Sparande totalt</button>
+                            <button class="bills-analysis-tab"        data-view="savingsperson" onclick="setAnalysisView('savingsperson')">Sparande per person</button>
                         </div>
                         <div class="bills-comparison-charts">
                             <canvas id="bills-analysis-chart"></canvas>
